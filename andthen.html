@@ -20,7 +20,7 @@
             overflow-y: auto;
             padding: 50px;
             position: relative;
-            border-left: 1px solid #333;
+            /* border moved to a single vertical rule for consistent alignment */
             margin-left: 100px;
         }
 
@@ -79,14 +79,17 @@
         #range-fields input { width: 220px; }
         #range-instructions { margin-top: 10px; color:#888; font-size:0.9em; }
 
-        #scale-sidebar { position: absolute; left: 0; top: 50px; bottom: 30px; width: 100px; overflow-y: auto; padding: 10px; border-right: 1px solid #333; background: #000; }
+        #scale-sidebar { position: absolute; left: 0; top: 50px; bottom: 30px; width: 100px; overflow-y: auto; padding: 10px; background: #000; }
+        /* A single vertical rule ensures the line stays perfectly aligned across the top and content */
+        #vertical-rule { position: absolute; left: 100px; top: 50px; bottom: 30px; width: 1px; background: #333; z-index: 90; }
         .scale-tick { padding: 6px 8px; color: #888; border-radius: 4px; margin-bottom: 6px; cursor: pointer; }
         .scale-tick.selected { background: #333; color: #fff; }
     </style>
 </head>
 <body>
 
-<div id="timeline-container">
+<div id="vertical-rule"></div>
+    <div id="timeline-container">
     </div>
 
 <div id="status-bar">
