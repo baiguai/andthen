@@ -1,0 +1,16 @@
+I would like to create a time line editor as a stand alone .html file - with vim-like key bindings.
+Because it's a timeline NORMAL mode should apply the vim-keys to the timeline itself, ('i' should enter INSERT mode if an event is selected).
+It should be dark mode (white on black), with 1px dim gray borders, brighter borders on the fields.
+By default it should use a range of (1800 - current year).
+I should be able to specify/modify the start point and end point (e.g.: 1900 - 2024, or 0 - 100) ('0' should prompt for the first value, '$' should prompt for the last value).
+I should be able to navigate the timeline using the keyboard (in NORMAL mode) - using 'j/k' to move from one point up or down, or 'h/l' to move from one event to the next/previous.
+I should be able to add events (with 'a'), with title and description etc.
+I should be able to delete events (with 'd').
+We can use tab/Shift+tab to navigate the event's fields.
+When not in not in INSERT mode the nodes should just display the event's borders and text etc. - when in INSERT mode they should be flat fields with single pixel borders.
+Escape cancels any edits that were made to an event, Enter should save the edits.
+'S' should perform a save as.
+'s' should perform a save.
+'U' should allow me to import data from another timeline's data (so I can easily perform upgrades).
+'/' should perform a search of the events, and display a list of the matches - Up/Down arrows should select the results, scrolling to and highlighting the events, enter should actually select the event, escape should remove the highlight and cancel the search.
+'?' should show a key-bindings help dialog that is filterable.

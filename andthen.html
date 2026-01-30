@@ -1,0 +1,393 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <title>VimTime - Timeline Editor</title>
+    <style>
+        body {
+            background-color: #000;
+            color: #fff;
+            font-family: 'Courier New', Courier, monospace;
+            margin: 0;
+            overflow: hidden;
+            display: flex;
+            flex-direction: column;
+            height: 100vh;
+        }
+
+        #timeline-container {
+            flex-grow: 1;
+            overflow-y: auto;
+            padding: 50px;
+            position: relative;
+            border-left: 1px solid #333;
+            margin-left: 100px;
+        }
+
+        .event-node {
+            border: 1px solid #333;
+            padding: 10px;
+            margin: 20px 0;
+            width: 300px;
+            background: #000;
+            position: relative;
+            transition: border-color 0.2s;
+        }
+
+        .event-node.selected {
+            border-color: #888;
+        }
+
+        .event-node.insert-mode {
+            border-color: #fff;
+        }
+
+        .event-node input, .event-node textarea {
+            background: transparent;
+            color: #fff;
+            border: 1px solid #444;
+            width: 90%;
+            display: block;
+            margin-bottom: 5px;
+            font-family: inherit;
+        }
+
+        .event-node.normal-mode input, .event-node.normal-mode textarea {
+            border: none;
+            pointer-events: none;
+        }
+
+        #status-bar {
+            background: #111;
+            padding: 5px 15px;
+            border-top: 1px solid #333;
+            font-size: 12px;
+            display: flex;
+            justify-content: space-between;
+        }
+
+        .mode-indicator { text-transform: uppercase; font-weight: bold; }
+        .search-box { position: fixed; bottom: 40px; left: 20px; background: #222; border: 1px solid #fff; padding: 5px; display: none; }
+        .help-dialog { position: fixed; top: 20%; left: 25%; width: 50%; background: #111; border: 1px solid #fff; padding: 20px; display: none; z-index: 100; }
+    </style>
+</head>
+<body>
+
+<div id="timeline-container">
+    </div>
+
+<div id="status-bar">
+    <div><span class="mode-indicator" id="mode-text">NORMAL</span> | <span id="range-text">1800 - 2026</span></div>
+    <div id="event-counter">0 Events</div>
+</div>
+
+<div id="search-container" class="search-box">
+    / <input type="text" id="search-input">
+</div>
+
+<div id="help-dialog" class="help-dialog">
+    <h3>Keybindings</h3>
+    <input type="text" id="help-filter" placeholder="Filter keys...">
+    <ul id="help-list">
+        <li>j/k: Scroll timeline</li>
+        <li>h/l: Nav events</li>
+        <li>a: Add event</li>
+        <li>i: Edit event</li>
+        <li>d: Delete event</li>
+        <li>s: Save</li>
+    </ul>
+</div>
+
+<script>
+    // Initialize state from embedded JSON if present (saved standalone HTML will include it)
+    let state = (function() {
+        const el = document.getElementById('andthen-data');
+        if (el) {
+            try {
+                const parsed = JSON.parse(el.textContent);
+                parsed.mode = 'NORMAL';
+                parsed.selectedIndex = -1;
+                return parsed;
+            } catch (e) {
+                console.error('Failed to parse embedded timeline data:', e);
+            }
+        }
+        return {
+            mode: 'NORMAL',
+            events: [],
+            selectedIndex: -1,
+            startYear: 1800,
+            endYear: new Date().getFullYear()
+        };
+    })();
+
+    const container = document.getElementById('timeline-container');
+    const modeText = document.getElementById('mode-text');
+
+    function render() {
+        container.innerHTML = '';
+        state.events.forEach((ev, idx) => {
+            const div = document.createElement('div');
+            div.className = `event-node ${state.selectedIndex === idx ? 'selected' : ''} ${state.mode === 'INSERT' && state.selectedIndex === idx ? 'insert-mode' : 'normal-mode'}`;
+
+            div.innerHTML = `
+                <div style="font-size: 0.8em; color: #666">${ev.year}</div>
+                <input type="text" value="${(ev.title||'').replace(/"/g,'&quot;')}" data-field="title" ${state.mode !== 'INSERT' || state.selectedIndex !== idx ? 'readonly' : ''}>
+                <textarea data-field="desc" ${state.mode !== 'INSERT' || state.selectedIndex !== idx ? 'readonly' : ''}>${(ev.desc||'').replace(/</g,'&lt;')}</textarea>
+            `;
+
+            // Bind input events to update state while editing
+            const input = div.querySelector('input[data-field="title"]');
+            const ta = div.querySelector('textarea[data-field="desc"]');
+            if (input) {
+                input.addEventListener('input', (e) => { state.events[idx].title = e.target.value; });
+                input.addEventListener('keydown', (e) => {
+                    if (e.key === 'Enter') {
+                        e.preventDefault();
+                        state.mode = 'NORMAL';
+                        modeText.innerText = 'NORMAL';
+                        render();
+                    }
+                });
+            }
+            if (ta) {
+                ta.addEventListener('input', (e) => { state.events[idx].desc = e.target.value; });
+                ta.addEventListener('keydown', (e) => {
+                    if (e.key === 'Escape') {
+                        state.mode = 'NORMAL';
+                        modeText.innerText = 'NORMAL';
+                        render();
+                    }
+                });
+            }
+
+            container.appendChild(div);
+        });
+        document.getElementById('event-counter').innerText = `${state.events.length} Events`;
+        document.getElementById('range-text').innerText = `${state.startYear} - ${state.endYear}`;
+    }
+
+    window.addEventListener('keydown', (e) => {
+        if (state.mode === 'NORMAL') {
+            handleNormalMode(e);
+        } else if (state.mode === 'INSERT') {
+            handleInsertMode(e);
+        }
+    });
+
+    function handleNormalMode(e) {
+        switch(e.key) {
+            case 'j': container.scrollTop += 50; break;
+            case 'k': container.scrollTop -= 50; break;
+            case 'l': 
+                state.selectedIndex = Math.min(state.selectedIndex + 1, state.events.length - 1);
+                render();
+                break;
+            case 'h': 
+                state.selectedIndex = Math.max(state.selectedIndex - 1, 0);
+                render();
+                break;
+            case 'a':
+                state.events.push({ title: 'New Event', desc: 'Description', year: state.startYear });
+                state.selectedIndex = state.events.length - 1;
+                render();
+                break;
+            case 'i':
+                if (state.selectedIndex !== -1) {
+                    state.mode = 'INSERT';
+                    modeText.innerText = 'INSERT';
+                    render();
+                }
+                break;
+            case 'd':
+                if (state.selectedIndex !== -1) {
+                    state.events.splice(state.selectedIndex, 1);
+                    state.selectedIndex = -1;
+                    render();
+                }
+                break;
+            case '0':
+                state.startYear = prompt("Enter Start Year:", state.startYear) || state.startYear;
+                render();
+                break;
+            case '$':
+                state.endYear = prompt("Enter End Year:", state.endYear) || state.endYear;
+                render();
+                break;
+            case 's':
+                saveQuick();
+                break;
+            case 'S':
+                saveAsHTML();
+                break;
+            case '%':
+                promptImport();
+                break;
+            case '?':
+                document.getElementById('help-dialog').style.display = 'block';
+                break;
+        }
+    }
+
+    function handleInsertMode(e) {
+        if (e.key === 'Escape') {
+            state.mode = 'NORMAL';
+            modeText.innerText = 'NORMAL';
+            render();
+        }
+        if (e.key === 'Enter' && !e.shiftKey) {
+            // Save edits: inputs already bound to state
+            state.mode = 'NORMAL';
+            modeText.innerText = 'NORMAL';
+            render();
+        }
+    }
+
+    // Quick save using current title and filename; falls back to Save As HTML if not set
+    function getSanitizedFilename() {
+        // Use document.title when possible, fallback to timestamped default
+        const baseRaw = (document.title && document.title !== 'andthen') ? document.title : `andthen-${Date.now()}`;
+        // If title already ends with .html, strip it to avoid duplicate extension
+        const base = baseRaw.toLowerCase().endsWith('.html') ? baseRaw.slice(0, -5) : baseRaw;
+        const sanitized = base.replace(/[^A-Za-z0-9-_\.]/g, '-');
+        return sanitized.toLowerCase().endsWith('.html') ? sanitized : sanitized + '.html';
+    }
+
+    function saveQuick() {
+        // If the document has embedded data and a filename is derivable, export quickly
+        const filename = getSanitizedFilename();
+        saveAsHTML({ filename, title: document.title });
+    }
+
+    // Keep saveData for JSON download separately
+    function saveData() {
+        const dataStr = "data:text/json;charset=utf-8," + encodeURIComponent(JSON.stringify(state, null, 2));
+        const downloadAnchorNode = document.createElement('a');
+        downloadAnchorNode.setAttribute("href", dataStr);
+        downloadAnchorNode.setAttribute("download", "timeline_data.json");
+        document.body.appendChild(downloadAnchorNode);
+        downloadAnchorNode.click();
+        downloadAnchorNode.remove();
+    }
+
+    function escapeHtml(s) {
+        return String(s).replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/"/g,'&quot;');
+    }
+
+    function saveAsHTML() {
+        const filename = prompt('Filename (e.g., mytimeline.html):', `andthen-${Date.now()}.html`) || `andthen-${Date.now()}.html`;
+        const pageTitle = prompt('Page title:', document.title || 'andthen') || document.title || 'andthen';
+        const jsonData = JSON.stringify(state, null, 2).replace(/</g, '\\u003c');
+        // Escape the closing tag to avoid prematurely closing this script block
+        const dataScript = `<script id="andthen-data" type="application/json">${jsonData}<\/script>`;
+
+        // Build a robust exported document from current DOM. This avoids relying on outerHTML which
+        // can be fragile when scripts contain closing script tag sequences.
+        const headSansScripts = document.head.innerHTML.replace(/<script[\s\S]*?<\/script>/gi, '');
+        const bodySansScripts = document.body.innerHTML.replace(/<script[\s\S]*?<\/script>/gi, '');
+        // Find inline script (this one) to re-embed safely
+        let mainScriptText = '';
+        for (const s of Array.from(document.scripts)) {
+            if (s.textContent && s.textContent.includes('function saveAsHTML')) { mainScriptText = s.textContent; break; }
+        }
+        if (!mainScriptText && document.scripts.length) mainScriptText = document.scripts[document.scripts.length-1].textContent || '';
+        // Escape sequences that would break embedding into a template literal or close the outer script
+        mainScriptText = mainScriptText.replace(/<\/script>/g, '<\\/script>');
+
+        // Build HTML using concatenation to avoid template literal interpolation issues
+        const parts = [];
+        parts.push('<!DOCTYPE html>\n<html lang="en">\n<head>\n<meta charset="utf-8">\n');
+        parts.push(headSansScripts.replace(/<title>.*?<\/title>/i, '<title>' + escapeHtml(pageTitle) + '</title>'));
+        parts.push('\n</head>\n<body>\n');
+        parts.push(dataScript + '\n');
+        parts.push(bodySansScripts + '\n');
+        parts.push('<script>\n' + mainScriptText + '\n<\/script>\n');
+        parts.push('</body>\n</html>');
+        const docHtml = parts.join('');
+
+        const blob = new Blob([docHtml], {type: 'text/html;charset=utf-8'});
+        const url = URL.createObjectURL(blob);
+        const a = document.createElement('a');
+        a.href = url;
+        a.download = filename;
+        document.body.appendChild(a);
+        a.click();
+        a.remove();
+        setTimeout(() => URL.revokeObjectURL(url), 1000);
+    }
+
+    // Import helpers
+    function promptImport() {
+        let input = document.getElementById('file-input');
+        if (!input) {
+            input = document.createElement('input');
+            input.type = 'file';
+            input.id = 'file-input';
+            input.accept = '.json,.html';
+            input.style.display = 'none';
+            input.addEventListener('change', (ev) => {
+                const f = ev.target.files[0];
+                if (!f) return;
+                const reader = new FileReader();
+                reader.onload = function(e) { handleImportedFile(e.target.result); };
+                reader.readAsText(f);
+                input.value = '';
+            });
+            document.body.appendChild(input);
+        }
+        input.click();
+    }
+
+    function handleImportedFile(text) {
+        // Try raw JSON first
+        try {
+            const parsed = JSON.parse(text);
+            if (parsed && Array.isArray(parsed.events)) {
+                state = parsed;
+                state.mode = 'NORMAL';
+                state.selectedIndex = -1;
+                render();
+                return;
+            }
+        } catch (e) {
+            // Not raw JSON — try to extract embedded script
+        }
+
+        const re = new RegExp('<script[^>]*\\bid=["\\\']andthen-data["\\\"][^>]*>([\\s\\S]*?)<\\/script>', 'i');
+        const m = text.match(re);
+        if (m && m[1]) {
+            try {
+                const parsed = JSON.parse(m[1]);
+                if (parsed && Array.isArray(parsed.events)) {
+                    state = parsed;
+                    state.mode = 'NORMAL';
+                    state.selectedIndex = -1;
+                    render();
+                    return;
+                }
+            } catch (err) {
+                console.error('Failed to parse embedded data', err);
+            }
+        }
+
+        alert('Could not find timeline data in the selected file. Select a .json or exported andthen .html file.');
+    }
+
+    // Update help dialog to include new keys
+    document.getElementById('help-list').innerHTML = `
+        <li>j/k: Scroll timeline</li>
+        <li>h/l: Nav events</li>
+        <li>a: Add event</li>
+        <li>i: Edit event</li>
+        <li>d: Delete event</li>
+        <li>s: Quick save (save as HTML using current title)</li>
+        <li>S: Save as (prompt for filename/title)</li>
+        <li>%: Import from .html or .json</li>
+        <li>?: Show help</li>
+    `;
+
+    // Initial Render
+    render();
+</script>
+</body>
+</html>
