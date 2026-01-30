@@ -129,7 +129,7 @@
         <label>End: <input id="range-end" type="text"></label>
     </div>
     <div id="range-preview" style="margin-top: 10px; color: #ccc; font-size: 0.9em;"></div>
-    <div id="range-instructions">Use <strong>Up/Down</strong> or <strong>j/k</strong> to change type, <strong>Tab</strong> to switch field, <strong>+/-</strong> to step, <strong>Enter</strong> to apply, <strong>Esc</strong> to cancel.</div>
+    <div id="range-instructions">Use <strong>Left/Right</strong> or <strong>h/l</strong> to change type, <strong>Tab</strong> to switch field, <strong>+/-</strong> to step, <strong>Enter</strong> to focus/advance/apply, <strong>Esc</strong> to cancel.</div>
 </div>
 
 <div id="scale-sidebar" style="display:none;"></div>
@@ -206,6 +206,9 @@
     }
 
     window.addEventListener('keydown', (e) => {
+        // If the range dialog is open, prefer its handlers and ignore global NORMAL/INSERT bindings
+        const rd = document.getElementById('range-dialog');
+        if (rd && rd.style.display === 'block') return;
         if (state.mode === 'NORMAL') {
             handleNormalMode(e);
         } else if (state.mode === 'INSERT') {
@@ -313,14 +316,13 @@
         // set current selection to existing range kind
         const kind = (state.timelineRange && state.timelineRange.kind) ? state.timelineRange.kind : 'years';
         types.forEach(t => t.classList.toggle('selected', t.dataset.kind === kind));
-        document.getElementById('range-start').value = state.timelineRange ? state.timelineRange.start : '';
-        document.getElementById('range-end').value = state.timelineRange ? state.timelineRange.end : '';
+        // Initialize the input fields appropriate to the currently selected kind
+        updateRangeFields(kind);
         updateRangePreview();
         window.addEventListener('keydown', handleRangeDialogKey);
-        // clicking types with mouse should still work
-        types.forEach(t => t.onclick = () => { types.forEach(x=>x.classList.remove('selected')); t.classList.add('selected'); updateRangePreview(); });
-        // focus start
-        document.getElementById('range-start').focus();
+        // clicking types with mouse should still work and update fields
+        types.forEach(t => t.onclick = () => { types.forEach(x=>x.classList.remove('selected')); t.classList.add('selected'); updateRangeFields(t.dataset.kind); updateRangePreview(); });
+        // Note: Do NOT auto-focus the Start field on open; Enter will focus it so accidental typing won't change values.
     }
 
     function closeRangeDialog() {
@@ -331,15 +333,26 @@
     function handleRangeDialogKey(e) {
         const dialog = document.getElementById('range-dialog');
         if (dialog.style.display !== 'block') return;
+        // Prevent other global handlers from seeing these key events while the dialog is active
+        e.stopPropagation();
         const types = Array.from(document.querySelectorAll('.range-type'));
         const selIndex = types.findIndex(t => t.classList.contains('selected'));
-        if (['ArrowUp','k'].includes(e.key)) { // up: previous type
+        if (['ArrowLeft'].includes(e.key)) { // left: previous type
             const idx = (selIndex <= 0) ? types.length - 1 : selIndex - 1;
-            types.forEach(x=>x.classList.remove('selected')); types[idx].classList.add('selected'); updateRangePreview(); e.preventDefault(); return;
+            types.forEach(x=>x.classList.remove('selected')); types[idx].classList.add('selected'); updateRangeFields(types[idx].dataset.kind); updateRangePreview(); e.preventDefault(); return;
         }
-        if (['ArrowDown','j'].includes(e.key)) { // down: next type
+        if (['ArrowRight'].includes(e.key)) { // right: next type
             const idx = (selIndex >= types.length - 1) ? 0 : selIndex + 1;
-            types.forEach(x=>x.classList.remove('selected')); types[idx].classList.add('selected'); updateRangePreview(); e.preventDefault(); return;
+            types.forEach(x=>x.classList.remove('selected')); types[idx].classList.add('selected'); updateRangeFields(types[idx].dataset.kind); updateRangePreview(); e.preventDefault(); return;
+        }
+        // Use h/l for left/right style navigation (vim-like) when inputs are NOT focused
+        if (['h','H'].includes(e.key) && document.activeElement !== document.getElementById('range-start') && document.activeElement !== document.getElementById('range-end')) {
+            const idx = (selIndex <= 0) ? types.length - 1 : selIndex - 1;
+            types.forEach(x=>x.classList.remove('selected')); types[idx].classList.add('selected'); updateRangeFields(types[idx].dataset.kind); updateRangePreview(); e.preventDefault(); return;
+        }
+        if (['l','L'].includes(e.key) && document.activeElement !== document.getElementById('range-start') && document.activeElement !== document.getElementById('range-end')) {
+            const idx = (selIndex >= types.length - 1) ? 0 : selIndex + 1;
+            types.forEach(x=>x.classList.remove('selected')); types[idx].classList.add('selected'); updateRangeFields(types[idx].dataset.kind); updateRangePreview(); e.preventDefault(); return;
         }
         if (e.key === 'Tab') {
             // switch between start and end input
@@ -351,7 +364,15 @@
         }
         if (e.key === '+' || e.key === '=') { stepRangeField(1); e.preventDefault(); return; }
         if (e.key === '-') { stepRangeField(-1); e.preventDefault(); return; }
-        if (e.key === 'Enter') { applyRangeFromDialog(); e.preventDefault(); return; }
+        // If Enter is pressed: move focus from first to second field, apply if second or focus none
+        if (e.key === 'Enter') {
+            const startEl = document.getElementById('range-start');
+            const endEl = document.getElementById('range-end');
+            if (document.activeElement === startEl) { endEl.focus(); e.preventDefault(); return; }
+            if (document.activeElement === endEl) { applyRangeFromDialog(); e.preventDefault(); return; }
+            // otherwise focus start
+            startEl.focus(); e.preventDefault(); return;
+        }
         if (e.key === 'Escape') { closeRangeDialog(); e.preventDefault(); return; }
     }
 
@@ -366,8 +387,22 @@
 
     function applyRangeFromDialog() {
         const kind = document.querySelector('.range-type.selected').dataset.kind;
-        const start = document.getElementById('range-start').value;
-        const end = document.getElementById('range-end').value;
+        let start = (document.getElementById('range-start').value || '').trim();
+        let end = (document.getElementById('range-end').value || '').trim();
+        // Normalize and validate inputs per kind
+        if (kind === 'letters') {
+            start = start.charAt(0) || '';
+            end = end.charAt(0) || '';
+            if (!start || !end) { alert('Letters must be single characters.'); return; }
+        }
+        if (kind === 'years') {
+            start = String(parseInt(start) || 0);
+            end = String(parseInt(end) || 0);
+        }
+        if (kind === 'numbers') {
+            start = String(parseFloat(start) || 0);
+            end = String(parseFloat(end) || 0);
+        }
         const computed = computeIncrements(kind, start, end);
         if (!computed || !computed.increments || !computed.increments.length) { alert('Invalid or empty range'); return; }
         state.timelineRange = { kind, start, end, increments: computed.increments, selectedIndex: 0 };
@@ -387,6 +422,68 @@
         } else {
             preview.textContent = 'No preview (invalid input)';
         }
+    }
+
+    function updateRangeFields(kind) {
+        const container = document.getElementById('range-fields');
+        const prevKind = (state.timelineRange && state.timelineRange.kind) ? state.timelineRange.kind : null;
+        const saved = (state.timelineRange && state.timelineRange.kind === kind) ? state.timelineRange : null;
+        let startVal = saved ? saved.start : '';
+        let endVal = saved ? saved.end : '';
+
+        if (kind === 'letters') {
+            container.innerHTML = `<label>Start: <input id="range-start" type="text" maxlength="1" pattern="[A-Za-z]"></label>\n        <label>End: <input id="range-end" type="text" maxlength="1" pattern="[A-Za-z]"></label>`;
+            const s = document.getElementById('range-start'); const e = document.getElementById('range-end');
+            if (!startVal) startVal = 'a'; if (!endVal) endVal = 'z';
+            s.value = startVal.slice(0,1); e.value = endVal.slice(0,1);
+            s.addEventListener('input', (ev) => { ev.target.value = (ev.target.value || '').slice(0,1); updateRangePreview(); });
+            e.addEventListener('input', (ev) => { ev.target.value = (ev.target.value || '').slice(0,1); updateRangePreview(); });
+            // Enter behavior: start -> focus end; end -> apply
+            s.addEventListener('keydown', (ev) => { ev.stopPropagation(); if (ev.key === 'Enter') { ev.preventDefault(); document.getElementById('range-end').focus(); } });
+            e.addEventListener('keydown', (ev) => { ev.stopPropagation(); if (ev.key === 'Enter') { ev.preventDefault(); applyRangeFromDialog(); } });
+        } else if (kind === 'years') {
+            container.innerHTML = `<label>Start: <input id="range-start" type="number" step="1"></label>\n        <label>End: <input id="range-end" type="number" step="1"></label>`;
+            const s = document.getElementById('range-start'); const e = document.getElementById('range-end');
+            if (!startVal) startVal = String(state.startYear || (new Date().getFullYear()-10));
+            if (!endVal) endVal = String(state.endYear || new Date().getFullYear());
+            s.value = startVal; e.value = endVal;
+            s.addEventListener('input', (ev)=> { ev.target.value = ev.target.value.replace(/[^\d\-]/g,''); updateRangePreview(); });
+            e.addEventListener('input', (ev)=> { ev.target.value = ev.target.value.replace(/[^\d\-]/g,''); updateRangePreview(); });
+            s.addEventListener('keydown', (ev)=> { ev.stopPropagation(); if (ev.key === 'Enter') { ev.preventDefault(); e.focus(); } });
+            e.addEventListener('keydown', (ev)=> { ev.stopPropagation(); if (ev.key === 'Enter') { ev.preventDefault(); applyRangeFromDialog(); } });
+        } else if (kind === 'months') {
+            container.innerHTML = `<label>Start: <input id="range-start" type="month"></label>\n        <label>End: <input id="range-end" type="month"></label>`;
+            const s = document.getElementById('range-start'); const e = document.getElementById('range-end');
+            if (!startVal) startVal = (state.startYear ? String(state.startYear) : String(new Date().getFullYear())) + '-' + String(new Date().getMonth()+1).padStart(2,'0');
+            if (!endVal) endVal = (state.endYear ? String(state.endYear) : String(new Date().getFullYear())) + '-' + String(new Date().getMonth()+1).padStart(2,'0');
+            s.value = startVal; e.value = endVal;
+            s.addEventListener('input', ()=> updateRangePreview());
+            e.addEventListener('input', ()=> updateRangePreview());
+            s.addEventListener('keydown', (ev)=> { ev.stopPropagation(); if (ev.key === 'Enter') { ev.preventDefault(); e.focus(); } });
+            e.addEventListener('keydown', (ev)=> { ev.stopPropagation(); if (ev.key === 'Enter') { ev.preventDefault(); applyRangeFromDialog(); } });
+        } else if (kind === 'days' || kind === 'dates') {
+            container.innerHTML = `<label>Start: <input id="range-start" type="date"></label>\n        <label>End: <input id="range-end" type="date"></label>`;
+            const s = document.getElementById('range-start'); const e = document.getElementById('range-end');
+            if (!startVal) startVal = formatDate(new Date());
+            if (!endVal) endVal = formatDate(new Date());
+            s.value = startVal; e.value = endVal;
+            s.addEventListener('input', ()=> updateRangePreview());
+            e.addEventListener('input', ()=> updateRangePreview());
+            s.addEventListener('keydown', (ev)=> { ev.stopPropagation(); if (ev.key === 'Enter') { ev.preventDefault(); e.focus(); } });
+            e.addEventListener('keydown', (ev)=> { ev.stopPropagation(); if (ev.key === 'Enter') { ev.preventDefault(); applyRangeFromDialog(); } });
+        } else if (kind === 'numbers') {
+            container.innerHTML = `<label>Start: <input id="range-start" type="number" step="any"></label>\n        <label>End: <input id="range-end" type="number" step="any"></label>`;
+            const s = document.getElementById('range-start'); const e = document.getElementById('range-end');
+            if (!startVal) startVal = '1'; if (!endVal) endVal = '10';
+            s.value = startVal; e.value = endVal;
+            s.addEventListener('input', ()=> updateRangePreview());
+            e.addEventListener('input', ()=> updateRangePreview());
+            s.addEventListener('keydown', (ev)=> { ev.stopPropagation(); if (ev.key === 'Enter') { ev.preventDefault(); e.focus(); } });
+            e.addEventListener('keydown', (ev)=> { ev.stopPropagation(); if (ev.key === 'Enter') { ev.preventDefault(); applyRangeFromDialog(); } });
+        }
+        // set the selected type on the UI
+        document.querySelectorAll('.range-type').forEach(t => t.classList.toggle('selected', t.dataset.kind === kind));
+        // Note: avoid auto-focusing Start element here; Enter will move focus to Start when appropriate.
     }
 
     function computeRangeFromYears(start, end) {
@@ -486,6 +583,12 @@
             d.onclick = () => { state.timelineRange.selectedIndex = idx; render(); };
             sb.appendChild(d);
         });
+        // Ensure the selected tick is visible and the main timeline scrolls proportionally
+        const selectedEl = sb.querySelector('.scale-tick.selected');
+        if (selectedEl) selectedEl.scrollIntoView({ block: 'center' });
+        const containerHeight = container.scrollHeight - container.clientHeight;
+        const pct = state.timelineRange.selectedIndex / Math.max(1, state.timelineRange.increments.length - 1);
+        container.scrollTop = Math.round(containerHeight * pct);
     }
 
     // Quick save using current title and filename; falls back to Save As HTML if not set
