@@ -21,7 +21,7 @@
             padding: 50px;
             position: relative;
             /* border moved to a single vertical rule for consistent alignment */
-            margin-left: 100px;
+            margin-left: 160px;
         }
 
         .event-node {
@@ -76,13 +76,13 @@
         .range-type { padding:6px 8px; border:1px solid #333; cursor: default; }
         .range-type.selected { background:#333; border-color: #fff; }
         #range-fields { display:flex; gap:10px; align-items:center; }
-        #range-fields input { width: 220px; }
+        #range-fields input { width: 260px; }
         #range-instructions { margin-top: 10px; color:#888; font-size:0.9em; }
 
-        #scale-sidebar { position: absolute; left: 0; top: 50px; bottom: 30px; width: 100px; overflow-y: auto; padding: 10px; background: #000; }
+        #scale-sidebar { position: absolute; left: 0; top: 50px; bottom: 30px; width: 160px; overflow-y: auto; padding: 10px; background: #000; }
         /* A single vertical rule ensures the line stays perfectly aligned across the top and content */
-        #vertical-rule { position: absolute; left: 100px; top: 50px; bottom: 30px; width: 1px; background: #333; z-index: 90; }
-        .scale-tick { padding: 6px 8px; color: #888; border-radius: 4px; margin-bottom: 6px; cursor: pointer; }
+        #vertical-rule { position: absolute; left: 160px; top: 50px; bottom: 30px; width: 1px; background: #333; z-index: 90; }
+        .scale-tick { padding: 8px 10px; color: #888; border-radius: 4px; margin-bottom: 6px; cursor: pointer; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
         .scale-tick.selected { background: #333; color: #fff; }
     </style>
 </head>
@@ -234,7 +234,8 @@
                 render();
                 break;
             case 'a':
-                state.events.push({ title: 'New Event', desc: 'Description', year: state.startYear });
+                const defaultYear = getDefaultEventValue();
+                state.events.push({ title: 'New Event', desc: 'Description', year: defaultYear });
                 state.selectedIndex = state.events.length - 1;
                 render();
                 break;
@@ -403,6 +404,19 @@
             start = String(parseFloat(start) || 0);
             end = String(parseFloat(end) || 0);
         }
+        // Normalize months (accept MM/YYYY or YYYY-MM etc.) to YYYY-MM
+        if (kind === 'months') {
+            const m1 = parseYearMonth(start); const m2 = parseYearMonth(end);
+            if (!m1 || !m2) { alert('Invalid month format. Use YYYY-MM or MM/YYYY'); return; }
+            start = `${m1.year}-${String(m1.month).padStart(2,'0')}`;
+            end = `${m2.year}-${String(m2.month).padStart(2,'0')}`;
+        }
+        // Normalize dates to YYYY-MM-DD (accept MM/DD/YYYY, DD/MM/YYYY, YYYY-MM-DD, etc.)
+        if (kind === 'days' || kind === 'dates') {
+            const d1 = parseDate(start); const d2 = parseDate(end);
+            if (!d1 || !d2) { alert('Invalid date format. Use YYYY-MM-DD or MM/DD/YYYY'); return; }
+            start = formatDate(d1); end = formatDate(d2);
+        }
         const computed = computeIncrements(kind, start, end);
         if (!computed || !computed.increments || !computed.increments.length) { alert('Invalid or empty range'); return; }
         state.timelineRange = { kind, start, end, increments: computed.increments, selectedIndex: 0 };
@@ -491,6 +505,15 @@
         return { kind: 'years', start: String(start), end: String(end), increments: (increments && increments.increments) ? increments.increments : [], selectedIndex: 0 };
     }
 
+    // Return the default event value (year/month/date/letter/number) for newly added events
+    function getDefaultEventValue() {
+        if (state.timelineRange && state.timelineRange.increments && state.timelineRange.increments.length) {
+            const idx = (typeof state.timelineRange.selectedIndex === 'number' && state.timelineRange.selectedIndex >= 0) ? state.timelineRange.selectedIndex : 0;
+            return state.timelineRange.increments[Math.min(idx, state.timelineRange.increments.length - 1)];
+        }
+        return String(state.startYear);
+    }
+
     function computeIncrements(kind, start, end, limit=1000) {
         const res = [];
         try {
@@ -533,13 +556,32 @@
     }
 
     function parseYearMonth(s) {
-        const m = String(s).trim().match(/^(\d{4})[-\/]?(\d{1,2})$/);
-        if (!m) return null; return { year: parseInt(m[1]), month: parseInt(m[2]) };
+        const str = String(s).trim();
+        let m = str.match(/^(\d{4})[-\/]?(\d{1,2})$/); // YYYY-MM or YYYY/MM
+        if (m) return { year: parseInt(m[1]), month: parseInt(m[2]) };
+        m = str.match(/^(\d{1,2})[-\/](\d{4})$/); // MM/YYYY or MM-YYYY
+        if (m) return { year: parseInt(m[2]), month: parseInt(m[1]) };
+        return null;
     }
     function formatMonth(d) { return d.getFullYear() + '-' + String(d.getMonth()+1).padStart(2,'0'); }
     function parseDate(s) {
-        const m = String(s).trim().match(/^(\d{4})-(\d{2})-(\d{2})$/);
-        if (!m) return null; return new Date(parseInt(m[1]), parseInt(m[2])-1, parseInt(m[3]));
+        const str = String(s).trim(); if (!str) return null;
+        // YYYY-MM-DD
+        let m = str.match(/^(\d{4})-(\d{2})-(\d{2})$/);
+        if (m) return new Date(parseInt(m[1]), parseInt(m[2])-1, parseInt(m[3]));
+        // MM/DD/YYYY or MM-DD-YYYY or DD/MM/YYYY - decide based on values
+        m = str.match(/^(\d{1,2})[\/\-](\d{1,2})[\/\-](\d{4})$/);
+        if (m) {
+            const p1 = parseInt(m[1]), p2 = parseInt(m[2]), y = parseInt(m[3]);
+            // if first component > 12, it's likely DD/MM/YYYY
+            if (p1 > 12 && p2 <= 12) return new Date(y, p2-1, p1);
+            // otherwise treat as MM/DD/YYYY
+            return new Date(y, p1-1, p2);
+        }
+        // YYYY/MM/DD
+        m = str.match(/^(\d{4})[\/\-](\d{1,2})[\/\-](\d{1,2})$/);
+        if (m) return new Date(parseInt(m[1]), parseInt(m[2])-1, parseInt(m[3]));
+        return null;
     }
     function formatDate(d) { return d.getFullYear() + '-' + String(d.getMonth()+1).padStart(2,'0') + '-' + String(d.getDate()).padStart(2,'0'); }
 
