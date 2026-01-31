@@ -125,8 +125,9 @@
       }
 
       function createEvent(titleText, opts = {}){
-        count++;
-        const side = opts.side || ((count % 2 === 1) ? 'left' : 'right');
+        // opts.insertAt: optional numeric index to insert the event BEFORE that index
+        const insertAt = (typeof opts.insertAt === 'number') ? Math.max(0, Math.min(opts.insertAt, eventsEl.children.length)) : eventsEl.children.length;
+        const side = opts.side || ((insertAt % 2 === 0) ? 'left' : 'right');
         const evt = document.createElement('div');
         evt.className = 'event ' + side;
 
@@ -153,7 +154,9 @@
           if(e.key === 'Enter'){
             e.preventDefault();
             title.blur();
-            addEvent('', { focus: true });
+            // create after this event
+            const idx = Array.prototype.indexOf.call(eventsEl.children, evt);
+            addEvent('', { focus: true, insertAt: idx + 1 });
           } else if(e.key === 'Escape'){
             title.blur();
           }
@@ -175,12 +178,21 @@
 
         evt.appendChild(point);
         evt.appendChild(content);
-        eventsEl.appendChild(evt);
+
+        // insert at the correct position
+        if(insertAt >= eventsEl.children.length) eventsEl.appendChild(evt);
+        else eventsEl.insertBefore(evt, eventsEl.children[insertAt]);
+
+        // keep internal count consistent
+        count = eventsEl.children.length;
 
         title.scrollIntoView({behavior:'smooth', block:'center'});
 
         // Focus and select only if opts.focus is not explicitly false
         if(opts.focus !== false){
+          // select the new event in NORMAL mode then focus
+          const newIndex = Array.prototype.indexOf.call(eventsEl.children, evt);
+          selectIndex(newIndex);
           requestAnimationFrame(()=>{
             title.focus();
             setMode('insert');
@@ -239,6 +251,11 @@
 
       function addEvent(text, opts = {}){
         const evt = createEvent(text, opts);
+        if(typeof opts.insertAt === 'number'){
+          // ensure selection ends up at the inserted position
+          const idx = Math.max(0, Math.min(opts.insertAt, eventsEl.children.length - 1));
+          selectIndex(idx);
+        }
         if(opts.focus !== false){ setMode('insert'); }
         return evt;
       }
@@ -595,9 +612,14 @@
           e.preventDefault(); ensureSearch(); showSearch(); return;
         }
 
-        if(e.key === 'a' || e.key === 'o'){
+        if(e.key === 'a'){
           e.preventDefault();
-          addEvent('', { focus: true });
+          if(selectedIndex !== -1){
+            // insert after selected
+            addEvent('', { focus: true, insertAt: selectedIndex + 1 });
+          } else {
+            addEvent('', { focus: true });
+          }
           return;
         }
 
