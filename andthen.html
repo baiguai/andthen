@@ -1,814 +1,138 @@
-<!DOCTYPE html>
+<!doctype html>
 <html lang="en">
 <head>
-    <meta charset="UTF-8">
-    <title>VimTime - Timeline Editor</title>
-    <style>
-        body {
-            background-color: #000;
-            color: #fff;
-            font-family: 'Courier New', Courier, monospace;
-            margin: 0;
-            overflow: hidden;
-            display: flex;
-            flex-direction: column;
-            height: 100vh;
-        }
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width,initial-scale=1" />
+  <title>AndThen — Vertical Timeline Editor</title>
+  <style>
+    :root{
+      --bg: #000;
+      --fg: #fff;
+      --line: #fff;
+      --border: dimgray; /* flat 1px dim gray borders */
+    }
+    html,body{height:100%; margin:0; background:var(--bg); color:var(--fg); font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, "Roboto Mono", monospace;}
 
-        #timeline-container {
-            flex-grow: 1;
-            overflow-y: auto;
-            padding: 50px;
-            position: relative;
-            /* border moved to a single vertical rule for consistent alignment */
-            margin-left: 160px;
-        }
+    /* Editor container */
+    #editor{height:100vh; overflow:auto; box-sizing:border-box;}
 
-        .event-node {
-            border: 1px solid #333;
-            padding: 10px;
-            margin: 20px 0;
-            width: 300px;
-            background: #000;
-            position: relative;
-            transition: border-color 0.2s;
-        }
+    /* Centered timeline column */
+    .timeline{position:relative; width:100%; max-width:900px; margin:0 auto; padding:48px 20px; box-sizing:border-box;}
 
-        .event-node.selected {
-            border-color: #888;
-        }
+    /* The vertical white line (1px) — it fills the timeline height (extends as events are added) */
+    .timeline .line{position:absolute; left:50%; top:0; bottom:0; width:1px; background:var(--line); transform:translateX(-50%);} 
 
-        .event-node.insert-mode {
-            border-color: #fff;
-        }
+    /* Stacks events vertically. Its height grows with content; the .line matches it. */
+    .events{position:relative; display:flex; flex-direction:column; gap:28px;}
 
-        .event-node input, .event-node textarea {
-            background: transparent;
-            color: #fff;
-            border: 1px solid #444;
-            width: 90%;
-            display: block;
-            margin-bottom: 5px;
-            font-family: inherit;
-        }
+    /* Each event occupies the full width but its content is boxed left or right of the center line */
+    .event{position:relative; display:flex; width:100%; align-items:flex-start;}
+    .box{border:1px solid var(--border); padding:10px 12px; color:var(--fg); max-width:46%; box-sizing:border-box; background:transparent; border-radius:0;}
 
-        .event-node.normal-mode input, .event-node.normal-mode textarea {
-            border: none;
-            pointer-events: none;
-        }
+    /* Left and right alignment relative to the center line */
+    .event.left{justify-content:flex-end;}        /* box to the left side */
+    .event.right{justify-content:flex-start;}      /* box to the right side */
+    .event.left .box{ text-align:right; }
+    .event.right .box{ text-align:left; }
 
-        #status-bar {
-            background: #111;
-            padding: 5px 15px;
-            border-top: 1px solid #333;
-            font-size: 12px;
-            display: flex;
-            justify-content: space-between;
-        }
+    /* Small connector dot at the center line for each event */
+    .point{position:absolute; left:50%; transform:translate(-50%, -50%); width:10px; height:10px; border:1px solid var(--border); background:var(--bg); box-sizing:border-box;}
 
-        .mode-indicator { text-transform: uppercase; font-weight: bold; }
-        .search-box { position: fixed; bottom: 40px; left: 20px; background: #222; border: 1px solid #fff; padding: 5px; display: none; }
-        .help-dialog { position: fixed; top: 20%; left: 25%; width: 50%; background: #111; border: 1px solid #fff; padding: 20px; display: none; z-index: 100; }
+    /* Editable content style */
+    .box[contenteditable]{outline:none; caret-color:var(--fg);} 
 
-        /* Range dialog and scale sidebar */
-        #range-dialog { position: fixed; top: 20%; left: 25%; width: 50%; background: #111; border: 1px solid #fff; padding: 20px; display: none; z-index: 110; }
-        #range-types { display:flex; gap:10px; margin-bottom: 10px; }
-        .range-type { padding:6px 8px; border:1px solid #333; cursor: default; }
-        .range-type.selected { background:#333; border-color: #fff; }
-        #range-fields { display:flex; gap:10px; align-items:center; }
-        #range-fields input { width: 260px; }
-        #range-instructions { margin-top: 10px; color:#888; font-size:0.9em; }
+    /* Make sure text selection looks ok on black */
+    ::selection{background:#444; color:var(--fg);} 
 
-        #scale-sidebar { position: absolute; left: 0; top: 50px; bottom: 30px; width: 160px; overflow-y: auto; padding: 10px; background: #000; }
-        /* A single vertical rule ensures the line stays perfectly aligned across the top and content */
-        #vertical-rule { position: absolute; left: 160px; top: 50px; bottom: 30px; width: 1px; background: #333; z-index: 90; }
-        .scale-tick { padding: 8px 10px; color: #888; border-radius: 4px; margin-bottom: 6px; cursor: pointer; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
-        .scale-tick.selected { background: #333; color: #fff; }
-    </style>
+    /* Remove default focus ring while keeping accessibility via keyboard */
+    .box:focus{box-shadow:0 0 0 1px rgba(255,255,255,0.06);}
+
+    /* Minimal responsive tweaks */
+    @media (max-width:640px){
+      .box{max-width:72%;}
+    }
+  </style>
 </head>
 <body>
-
-<div id="vertical-rule"></div>
-    <div id="timeline-container">
+  <div id="editor">
+    <div class="timeline">
+      <div class="line" aria-hidden="true"></div>
+      <div class="events" id="events"></div>
     </div>
+  </div>
 
-<div id="status-bar">
-    <div><span class="mode-indicator" id="mode-text">NORMAL</span> | <span id="range-text">1800 - 2026</span></div>
-    <div id="event-counter">0 Events</div>
-</div>
+  <script>
+    // Timeline Editor (minimal)
+    // - White on black theme
+    // - Center vertical line (1px) automatically extends as events are added
+    // - Flat 1px dim gray borders for event boxes
+    // - Simple 'a' keybinding to add a new event (no visible UI)
 
-<div id="search-container" class="search-box">
-    / <input type="text" id="search-input">
-</div>
+    (function(){
+      const eventsEl = document.getElementById('events');
+      let count = 0;
 
-<div id="help-dialog" class="help-dialog">
-    <h3>Keybindings</h3>
-    <input type="text" id="help-filter" placeholder="Filter keys...">
-    <ul id="help-list">
-        <li>j/k: Scroll timeline</li>
-        <li>h/l: Nav events</li>
-        <li>a: Add event</li>
-        <li>i: Edit event</li>
-        <li>d: Delete event</li>
-        <li>s: Save</li>
-    </ul>
-</div>
+      function createEvent(text){
+        count++;
+        const evt = document.createElement('div');
+        evt.className = 'event ' + ((count % 2 === 1) ? 'left' : 'right');
 
-<div id="range-dialog" class="help-dialog" style="display:none;" >
-    <h3>Set Timeline Range</h3>
-    <div id="range-types">
-        <div class="range-type" data-kind="years">Years</div>
-        <div class="range-type" data-kind="months">Months</div>
-        <div class="range-type" data-kind="days">Days</div>
-        <div class="range-type" data-kind="dates">Dates</div>
-        <div class="range-type" data-kind="numbers">Numbers</div>
-        <div class="range-type" data-kind="letters">Letters</div>
-    </div>
-    <div id="range-fields">
-        <label>Start: <input id="range-start" type="text"></label>
-        <label>End: <input id="range-end" type="text"></label>
-    </div>
-    <div id="range-preview" style="margin-top: 10px; color: #ccc; font-size: 0.9em;"></div>
-    <div id="range-instructions">Use <strong>Left/Right</strong> or <strong>h/l</strong> to change type, <strong>Tab</strong> to switch field, <strong>+/-</strong> to step, <strong>Enter</strong> to focus/advance/apply, <strong>Esc</strong> to cancel.</div>
-</div>
+        const point = document.createElement('div');
+        point.className = 'point';
+        // Position the dot vertically in line with the box top + padding
+        // We'll place it at the center of the box's top edge via CSS transform
 
-<div id="scale-sidebar" style="display:none;"></div>
+        const box = document.createElement('div');
+        box.className = 'box';
+        box.setAttribute('contenteditable', 'true');
+        box.innerText = text || ('Event ' + count);
 
-<script>
-    // Initialize state from embedded JSON if present (saved standalone HTML will include it)
-    let state = (function() {
-        const el = document.getElementById('andthen-data');
-        if (el) {
-            try {
-                const parsed = JSON.parse(el.textContent);
-                parsed.mode = 'NORMAL';
-                parsed.selectedIndex = -1;
-                return parsed;
-            } catch (e) {
-                console.error('Failed to parse embedded timeline data:', e);
-            }
-        }
-        return {
-            mode: 'NORMAL',
-            events: [],
-            selectedIndex: -1,
-            startYear: 1800,
-            endYear: new Date().getFullYear()
-        };
-    })();
-
-    const container = document.getElementById('timeline-container');
-    const modeText = document.getElementById('mode-text');
-
-    function render() {
-        container.innerHTML = '';
-        state.events.forEach((ev, idx) => {
-            const div = document.createElement('div');
-            div.className = `event-node ${state.selectedIndex === idx ? 'selected' : ''} ${state.mode === 'INSERT' && state.selectedIndex === idx ? 'insert-mode' : 'normal-mode'}`;
-
-            div.innerHTML = `
-                <div style="font-size: 0.8em; color: #666">${ev.year}</div>
-                <input type="text" value="${(ev.title||'').replace(/"/g,'&quot;')}" data-field="title" ${state.mode !== 'INSERT' || state.selectedIndex !== idx ? 'readonly' : ''}>
-                <textarea data-field="desc" ${state.mode !== 'INSERT' || state.selectedIndex !== idx ? 'readonly' : ''}>${(ev.desc||'').replace(/</g,'&lt;')}</textarea>
-            `;
-
-            // Bind input events to update state while editing
-            const input = div.querySelector('input[data-field="title"]');
-            const ta = div.querySelector('textarea[data-field="desc"]');
-            if (input) {
-                input.addEventListener('input', (e) => { state.events[idx].title = e.target.value; });
-                input.addEventListener('keydown', (e) => {
-                    if (e.key === 'Enter') {
-                        e.preventDefault();
-                        state.mode = 'NORMAL';
-                        modeText.innerText = 'NORMAL';
-                        render();
-                    }
-                });
-            }
-            if (ta) {
-                ta.addEventListener('input', (e) => { state.events[idx].desc = e.target.value; });
-                ta.addEventListener('keydown', (e) => {
-                    if (e.key === 'Escape') {
-                        state.mode = 'NORMAL';
-                        modeText.innerText = 'NORMAL';
-                        render();
-                    }
-                });
-            }
-
-            container.appendChild(div);
-        });
-        document.getElementById('event-counter').innerText = `${state.events.length} Events`;
-        document.getElementById('range-text').innerText = `${state.startYear} - ${state.endYear}`;
-        // update the scale sidebar
-        renderScale();
-    }
-
-    window.addEventListener('keydown', (e) => {
-        // If the range dialog is open, prefer its handlers and ignore global NORMAL/INSERT bindings
-        const rd = document.getElementById('range-dialog');
-        if (rd && rd.style.display === 'block') return;
-        if (state.mode === 'NORMAL') {
-            handleNormalMode(e);
-        } else if (state.mode === 'INSERT') {
-            handleInsertMode(e);
-        }
-    });
-
-    function handleNormalMode(e) {
-        switch(e.key) {
-                case 'j':
-                // If a range is active, navigate the scale; otherwise scroll
-                if (state.timelineRange && state.timelineRange.increments && state.timelineRange.increments.length) { moveTick(1); } else { container.scrollTop += 50; }
-                break;
-            case 'k':
-                if (state.timelineRange && state.timelineRange.increments && state.timelineRange.increments.length) { moveTick(-1); } else { container.scrollTop -= 50; }
-                break;
-            case 'l': 
-                state.selectedIndex = Math.min(state.selectedIndex + 1, state.events.length - 1);
-                render();
-                break;
-            case 'h': 
-                state.selectedIndex = Math.max(state.selectedIndex - 1, 0);
-                render();
-                break;
-            case 'a':
-                const defaultYear = getDefaultEventValue();
-                state.events.push({ title: 'New Event', desc: 'Description', year: defaultYear });
-                state.selectedIndex = state.events.length - 1;
-                render();
-                break;
-            case 'i':
-                if (state.selectedIndex !== -1) {
-                    state.mode = 'INSERT';
-                    modeText.innerText = 'INSERT';
-                    render();
-                }
-                break;
-            case 'd':
-                if (state.selectedIndex !== -1) {
-                    state.events.splice(state.selectedIndex, 1);
-                    state.selectedIndex = -1;
-                    render();
-                }
-                break;
-                case '0':
-                openRangeDialog();
-                break;
-            // Removed the old '$' prompt-based end-year shortcut in favor of the new range dialog
-
-            case 's':
-                saveQuick();
-                break;
-            case 'S':
-                saveAsHTML();
-                break;
-            case '%':
-                promptImport();
-                break;
-            case 'g':
-                if (state.timelineRange && state.timelineRange.increments && state.timelineRange.increments.length) { state.timelineRange.selectedIndex = 0; render(); }
-                break;
-            case 'G':
-                if (state.timelineRange && state.timelineRange.increments && state.timelineRange.increments.length) { state.timelineRange.selectedIndex = state.timelineRange.increments.length - 1; render(); }
-                break;
-            case '?':
-                document.getElementById('help-dialog').style.display = 'block';
-                break;
-        }
-    }
-
-    function handleInsertMode(e) {
-        if (e.key === 'Escape') {
-            state.mode = 'NORMAL';
-            modeText.innerText = 'NORMAL';
-            render();
-        }
-        if (e.key === 'Enter' && !e.shiftKey) {
-            // Save edits: inputs already bound to state
-            state.mode = 'NORMAL';
-            modeText.innerText = 'NORMAL';
-            render();
-        }
-    }
-
-    // --- Range dialog, scale computation, and navigation ---
-    // Ensure timelineRange exists and has increments (preserve when loading)
-    if (!state.timelineRange) {
-        state.timelineRange = computeRangeFromYears(state.startYear, state.endYear);
-    } else {
-        // Recompute increments if missing or incomplete
-        const kind = state.timelineRange.kind || 'years';
-        const start = state.timelineRange.start || String(state.startYear);
-        const end = state.timelineRange.end || String(state.endYear);
-        const computed = computeIncrements(kind, start, end);
-        state.timelineRange.kind = kind;
-        state.timelineRange.start = start;
-        state.timelineRange.end = end;
-        state.timelineRange.increments = (computed && computed.increments) ? computed.increments : (state.timelineRange.increments || []);
-        state.timelineRange.selectedIndex = typeof state.timelineRange.selectedIndex === 'number' ? state.timelineRange.selectedIndex : 0;
-    }
-
-    function openRangeDialog() {
-        const dialog = document.getElementById('range-dialog');
-        const types = Array.from(document.querySelectorAll('.range-type'));
-        dialog.style.display = 'block';
-        // set current selection to existing range kind
-        const kind = (state.timelineRange && state.timelineRange.kind) ? state.timelineRange.kind : 'years';
-        types.forEach(t => t.classList.toggle('selected', t.dataset.kind === kind));
-        // Initialize the input fields appropriate to the currently selected kind
-        updateRangeFields(kind);
-        updateRangePreview();
-        window.addEventListener('keydown', handleRangeDialogKey);
-        // clicking types with mouse should still work and update fields
-        types.forEach(t => t.onclick = () => { types.forEach(x=>x.classList.remove('selected')); t.classList.add('selected'); updateRangeFields(t.dataset.kind); updateRangePreview(); });
-        // Note: Do NOT auto-focus the Start field on open; Enter will focus it so accidental typing won't change values.
-    }
-
-    function closeRangeDialog() {
-        document.getElementById('range-dialog').style.display = 'none';
-        window.removeEventListener('keydown', handleRangeDialogKey);
-    }
-
-    function handleRangeDialogKey(e) {
-        const dialog = document.getElementById('range-dialog');
-        if (dialog.style.display !== 'block') return;
-        // Prevent other global handlers from seeing these key events while the dialog is active
-        e.stopPropagation();
-        const types = Array.from(document.querySelectorAll('.range-type'));
-        const selIndex = types.findIndex(t => t.classList.contains('selected'));
-        if (['ArrowLeft'].includes(e.key)) { // left: previous type
-            const idx = (selIndex <= 0) ? types.length - 1 : selIndex - 1;
-            types.forEach(x=>x.classList.remove('selected')); types[idx].classList.add('selected'); updateRangeFields(types[idx].dataset.kind); updateRangePreview(); e.preventDefault(); return;
-        }
-        if (['ArrowRight'].includes(e.key)) { // right: next type
-            const idx = (selIndex >= types.length - 1) ? 0 : selIndex + 1;
-            types.forEach(x=>x.classList.remove('selected')); types[idx].classList.add('selected'); updateRangeFields(types[idx].dataset.kind); updateRangePreview(); e.preventDefault(); return;
-        }
-        // Use h/l for left/right style navigation (vim-like) when inputs are NOT focused
-        if (['h','H'].includes(e.key) && document.activeElement !== document.getElementById('range-start') && document.activeElement !== document.getElementById('range-end')) {
-            const idx = (selIndex <= 0) ? types.length - 1 : selIndex - 1;
-            types.forEach(x=>x.classList.remove('selected')); types[idx].classList.add('selected'); updateRangeFields(types[idx].dataset.kind); updateRangePreview(); e.preventDefault(); return;
-        }
-        if (['l','L'].includes(e.key) && document.activeElement !== document.getElementById('range-start') && document.activeElement !== document.getElementById('range-end')) {
-            const idx = (selIndex >= types.length - 1) ? 0 : selIndex + 1;
-            types.forEach(x=>x.classList.remove('selected')); types[idx].classList.add('selected'); updateRangeFields(types[idx].dataset.kind); updateRangePreview(); e.preventDefault(); return;
-        }
-        if (e.key === 'Tab') {
-            // switch between start and end input
+        // When the user presses Enter inside a box, stop editing and create a new event below.
+        box.addEventListener('keydown', (e)=>{
+          if(e.key === 'Enter'){
             e.preventDefault();
-            const start = document.getElementById('range-start');
-            const end = document.getElementById('range-end');
-            if (document.activeElement === start) end.focus(); else start.focus();
-            return;
-        }
-        if (e.key === '+' || e.key === '=') { stepRangeField(1); e.preventDefault(); return; }
-        if (e.key === '-') { stepRangeField(-1); e.preventDefault(); return; }
-        // If Enter is pressed: move focus from first to second field, apply if second or focus none
-        if (e.key === 'Enter') {
-            const startEl = document.getElementById('range-start');
-            const endEl = document.getElementById('range-end');
-            if (document.activeElement === startEl) { endEl.focus(); e.preventDefault(); return; }
-            if (document.activeElement === endEl) { applyRangeFromDialog(); e.preventDefault(); return; }
-            // otherwise focus start
-            startEl.focus(); e.preventDefault(); return;
-        }
-        if (e.key === 'Escape') { closeRangeDialog(); e.preventDefault(); return; }
-    }
-
-    function stepRangeField(delta) {
-        const startEl = document.getElementById('range-start');
-        const endEl = document.getElementById('range-end');
-        const active = (document.activeElement === endEl) ? endEl : startEl;
-        const kind = document.querySelector('.range-type.selected').dataset.kind;
-        active.value = stepValue(kind, active.value, delta);
-        updateRangePreview();
-    }
-
-    function applyRangeFromDialog() {
-        const kind = document.querySelector('.range-type.selected').dataset.kind;
-        let start = (document.getElementById('range-start').value || '').trim();
-        let end = (document.getElementById('range-end').value || '').trim();
-        // Normalize and validate inputs per kind
-        if (kind === 'letters') {
-            start = start.charAt(0) || '';
-            end = end.charAt(0) || '';
-            if (!start || !end) { alert('Letters must be single characters.'); return; }
-        }
-        if (kind === 'years') {
-            start = String(parseInt(start) || 0);
-            end = String(parseInt(end) || 0);
-        }
-        if (kind === 'numbers') {
-            start = String(parseFloat(start) || 0);
-            end = String(parseFloat(end) || 0);
-        }
-        // Normalize months (accept MM/YYYY or YYYY-MM etc.) to YYYY-MM
-        if (kind === 'months') {
-            const m1 = parseYearMonth(start); const m2 = parseYearMonth(end);
-            if (!m1 || !m2) { alert('Invalid month format. Use YYYY-MM or MM/YYYY'); return; }
-            start = `${m1.year}-${String(m1.month).padStart(2,'0')}`;
-            end = `${m2.year}-${String(m2.month).padStart(2,'0')}`;
-        }
-        // Normalize dates to YYYY-MM-DD (accept MM/DD/YYYY, DD/MM/YYYY, YYYY-MM-DD, etc.)
-        if (kind === 'days' || kind === 'dates') {
-            const d1 = parseDate(start); const d2 = parseDate(end);
-            if (!d1 || !d2) { alert('Invalid date format. Use YYYY-MM-DD or MM/DD/YYYY'); return; }
-            start = formatDate(d1); end = formatDate(d2);
-        }
-        const computed = computeIncrements(kind, start, end);
-        if (!computed || !computed.increments || !computed.increments.length) { alert('Invalid or empty range'); return; }
-        state.timelineRange = { kind, start, end, increments: computed.increments, selectedIndex: 0 };
-        document.getElementById('scale-sidebar').style.display = 'block';
-        closeRangeDialog();
-        render();
-    }
-
-    function updateRangePreview() {
-        const kind = document.querySelector('.range-type.selected').dataset.kind;
-        const start = document.getElementById('range-start').value;
-        const end = document.getElementById('range-end').value;
-        const preview = document.getElementById('range-preview');
-        const computed = computeIncrements(kind, start, end, 8);
-        if (computed && computed.increments && computed.increments.length) {
-            preview.textContent = computed.increments.slice(0,8).join('  •  ') + (computed.increments.length > 8 ? '  …' : '');
-        } else {
-            preview.textContent = 'No preview (invalid input)';
-        }
-    }
-
-    function updateRangeFields(kind) {
-        const container = document.getElementById('range-fields');
-        const prevKind = (state.timelineRange && state.timelineRange.kind) ? state.timelineRange.kind : null;
-        const saved = (state.timelineRange && state.timelineRange.kind === kind) ? state.timelineRange : null;
-        let startVal = saved ? saved.start : '';
-        let endVal = saved ? saved.end : '';
-
-        if (kind === 'letters') {
-            container.innerHTML = `<label>Start: <input id="range-start" type="text" maxlength="1" pattern="[A-Za-z]"></label>\n        <label>End: <input id="range-end" type="text" maxlength="1" pattern="[A-Za-z]"></label>`;
-            const s = document.getElementById('range-start'); const e = document.getElementById('range-end');
-            if (!startVal) startVal = 'a'; if (!endVal) endVal = 'z';
-            s.value = startVal.slice(0,1); e.value = endVal.slice(0,1);
-            s.addEventListener('input', (ev) => { ev.target.value = (ev.target.value || '').slice(0,1); updateRangePreview(); });
-            e.addEventListener('input', (ev) => { ev.target.value = (ev.target.value || '').slice(0,1); updateRangePreview(); });
-            // Enter behavior: start -> focus end; end -> apply
-            s.addEventListener('keydown', (ev) => { ev.stopPropagation(); if (ev.key === 'Enter') { ev.preventDefault(); document.getElementById('range-end').focus(); } });
-            e.addEventListener('keydown', (ev) => { ev.stopPropagation(); if (ev.key === 'Enter') { ev.preventDefault(); applyRangeFromDialog(); } });
-        } else if (kind === 'years') {
-            container.innerHTML = `<label>Start: <input id="range-start" type="number" step="1"></label>\n        <label>End: <input id="range-end" type="number" step="1"></label>`;
-            const s = document.getElementById('range-start'); const e = document.getElementById('range-end');
-            if (!startVal) startVal = String(state.startYear || (new Date().getFullYear()-10));
-            if (!endVal) endVal = String(state.endYear || new Date().getFullYear());
-            s.value = startVal; e.value = endVal;
-            s.addEventListener('input', (ev)=> { ev.target.value = ev.target.value.replace(/[^\d\-]/g,''); updateRangePreview(); });
-            e.addEventListener('input', (ev)=> { ev.target.value = ev.target.value.replace(/[^\d\-]/g,''); updateRangePreview(); });
-            s.addEventListener('keydown', (ev)=> { ev.stopPropagation(); if (ev.key === 'Enter') { ev.preventDefault(); e.focus(); } });
-            e.addEventListener('keydown', (ev)=> { ev.stopPropagation(); if (ev.key === 'Enter') { ev.preventDefault(); applyRangeFromDialog(); } });
-        } else if (kind === 'months') {
-            container.innerHTML = `<label>Start: <input id="range-start" type="month"></label>\n        <label>End: <input id="range-end" type="month"></label>`;
-            const s = document.getElementById('range-start'); const e = document.getElementById('range-end');
-            if (!startVal) startVal = (state.startYear ? String(state.startYear) : String(new Date().getFullYear())) + '-' + String(new Date().getMonth()+1).padStart(2,'0');
-            if (!endVal) endVal = (state.endYear ? String(state.endYear) : String(new Date().getFullYear())) + '-' + String(new Date().getMonth()+1).padStart(2,'0');
-            s.value = startVal; e.value = endVal;
-            s.addEventListener('input', ()=> updateRangePreview());
-            e.addEventListener('input', ()=> updateRangePreview());
-            s.addEventListener('keydown', (ev)=> { ev.stopPropagation(); if (ev.key === 'Enter') { ev.preventDefault(); e.focus(); } });
-            e.addEventListener('keydown', (ev)=> { ev.stopPropagation(); if (ev.key === 'Enter') { ev.preventDefault(); applyRangeFromDialog(); } });
-        } else if (kind === 'days' || kind === 'dates') {
-            container.innerHTML = `<label>Start: <input id="range-start" type="date"></label>\n        <label>End: <input id="range-end" type="date"></label>`;
-            const s = document.getElementById('range-start'); const e = document.getElementById('range-end');
-            if (!startVal) startVal = formatDate(new Date());
-            if (!endVal) endVal = formatDate(new Date());
-            s.value = startVal; e.value = endVal;
-            s.addEventListener('input', ()=> updateRangePreview());
-            e.addEventListener('input', ()=> updateRangePreview());
-            s.addEventListener('keydown', (ev)=> { ev.stopPropagation(); if (ev.key === 'Enter') { ev.preventDefault(); e.focus(); } });
-            e.addEventListener('keydown', (ev)=> { ev.stopPropagation(); if (ev.key === 'Enter') { ev.preventDefault(); applyRangeFromDialog(); } });
-        } else if (kind === 'numbers') {
-            container.innerHTML = `<label>Start: <input id="range-start" type="number" step="any"></label>\n        <label>End: <input id="range-end" type="number" step="any"></label>`;
-            const s = document.getElementById('range-start'); const e = document.getElementById('range-end');
-            if (!startVal) startVal = '1'; if (!endVal) endVal = '10';
-            s.value = startVal; e.value = endVal;
-            s.addEventListener('input', ()=> updateRangePreview());
-            e.addEventListener('input', ()=> updateRangePreview());
-            s.addEventListener('keydown', (ev)=> { ev.stopPropagation(); if (ev.key === 'Enter') { ev.preventDefault(); e.focus(); } });
-            e.addEventListener('keydown', (ev)=> { ev.stopPropagation(); if (ev.key === 'Enter') { ev.preventDefault(); applyRangeFromDialog(); } });
-        }
-        // set the selected type on the UI
-        document.querySelectorAll('.range-type').forEach(t => t.classList.toggle('selected', t.dataset.kind === kind));
-        // Note: avoid auto-focusing Start element here; Enter will move focus to Start when appropriate.
-    }
-
-    function computeRangeFromYears(start, end) {
-        const increments = computeIncrements('years', String(start), String(end));
-        return { kind: 'years', start: String(start), end: String(end), increments: (increments && increments.increments) ? increments.increments : [], selectedIndex: 0 };
-    }
-
-    // Return the default event value (year/month/date/letter/number) for newly added events
-    function getDefaultEventValue() {
-        if (state.timelineRange && state.timelineRange.increments && state.timelineRange.increments.length) {
-            const idx = (typeof state.timelineRange.selectedIndex === 'number' && state.timelineRange.selectedIndex >= 0) ? state.timelineRange.selectedIndex : 0;
-            return state.timelineRange.increments[Math.min(idx, state.timelineRange.increments.length - 1)];
-        }
-        return String(state.startYear);
-    }
-
-    function computeIncrements(kind, start, end, limit=1000) {
-        const res = [];
-        try {
-            if (kind === 'years') {
-                let s = parseInt(start), e = parseInt(end);
-                if (isNaN(s) || isNaN(e)) return null;
-                if (s > e) { const t = s; s = e; e = t; }
-                const cap = Math.min(limit, e - s + 1);
-                for (let y = s; y <= e && res.length < cap; y++) res.push(String(y));
-            } else if (kind === 'months') {
-                const m1 = parseYearMonth(start); const m2 = parseYearMonth(end);
-                if (!m1 || !m2) return null;
-                let d = new Date(m1.year, m1.month-1, 1); const endD = new Date(m2.year, m2.month-1, 1);
-                if (d > endD) { const t = d; d = endD; endD = t; }
-                while (d <= endD && res.length < limit) {
-                    res.push(formatMonth(d)); d.setMonth(d.getMonth() + 1);
-                }
-            } else if (kind === 'days' || kind === 'dates') {
-                const d1 = parseDate(start); const d2 = parseDate(end);
-                if (!d1 || !d2) return null;
-                let d = new Date(d1.getFullYear(), d1.getMonth(), d1.getDate()); const endD = new Date(d2.getFullYear(), d2.getMonth(), d2.getDate());
-                if (d > endD) { const t = d; d = endD; endD = t; }
-                while (d <= endD && res.length < limit) {
-                    res.push(formatDate(d)); d.setDate(d.getDate() + 1);
-                }
-            } else if (kind === 'numbers') {
-                let s = parseFloat(start), e = parseFloat(end);
-                if (isNaN(s) || isNaN(e)) return null;
-                if (s > e) { const t = s; s = e; e = t; }
-                for (let v = s; v <= e && res.length < limit; v++) res.push(String(v));
-            } else if (kind === 'letters') {
-                let a = String(start).trim().charAt(0); let b = String(end).trim().charAt(0);
-                if (!a || !b) return null;
-                const ca = a.charCodeAt(0); const cb = b.charCodeAt(0);
-                let s = Math.min(ca, cb), e = Math.max(ca, cb);
-                for (let c = s; c <= e && res.length < limit; c++) res.push(String.fromCharCode(c));
-            }
-        } catch (err) { console.error('computeIncrements error', err); return null; }
-        return { increments: res };
-    }
-
-    function parseYearMonth(s) {
-        const str = String(s).trim();
-        let m = str.match(/^(\d{4})[-\/]?(\d{1,2})$/); // YYYY-MM or YYYY/MM
-        if (m) return { year: parseInt(m[1]), month: parseInt(m[2]) };
-        m = str.match(/^(\d{1,2})[-\/](\d{4})$/); // MM/YYYY or MM-YYYY
-        if (m) return { year: parseInt(m[2]), month: parseInt(m[1]) };
-        return null;
-    }
-    function formatMonth(d) { return d.getFullYear() + '-' + String(d.getMonth()+1).padStart(2,'0'); }
-    function parseDate(s) {
-        const str = String(s).trim(); if (!str) return null;
-        // YYYY-MM-DD
-        let m = str.match(/^(\d{4})-(\d{2})-(\d{2})$/);
-        if (m) return new Date(parseInt(m[1]), parseInt(m[2])-1, parseInt(m[3]));
-        // MM/DD/YYYY or MM-DD-YYYY or DD/MM/YYYY - decide based on values
-        m = str.match(/^(\d{1,2})[\/\-](\d{1,2})[\/\-](\d{4})$/);
-        if (m) {
-            const p1 = parseInt(m[1]), p2 = parseInt(m[2]), y = parseInt(m[3]);
-            // if first component > 12, it's likely DD/MM/YYYY
-            if (p1 > 12 && p2 <= 12) return new Date(y, p2-1, p1);
-            // otherwise treat as MM/DD/YYYY
-            return new Date(y, p1-1, p2);
-        }
-        // YYYY/MM/DD
-        m = str.match(/^(\d{4})[\/\-](\d{1,2})[\/\-](\d{1,2})$/);
-        if (m) return new Date(parseInt(m[1]), parseInt(m[2])-1, parseInt(m[3]));
-        return null;
-    }
-    function formatDate(d) { return d.getFullYear() + '-' + String(d.getMonth()+1).padStart(2,'0') + '-' + String(d.getDate()).padStart(2,'0'); }
-
-    function stepValue(kind, val, delta) {
-        try {
-            if (kind === 'years') { let v = parseInt(val)||0; return String(v + delta); }
-            if (kind === 'numbers') { let v = parseFloat(val)||0; return String(v + delta); }
-            if (kind === 'letters') { let c = (String(val).charAt(0) || 'a').charCodeAt(0); return String.fromCharCode(c + delta); }
-            if (kind === 'months') {
-                const p = parseYearMonth(val), base = p ? new Date(p.year, p.month-1, 1) : new Date(); base.setMonth(base.getMonth()+delta); return formatMonth(base);
-            }
-            if (kind === 'days' || kind === 'dates') {
-                const d = parseDate(val) || new Date(); d.setDate(d.getDate() + delta); return formatDate(d);
-            }
-        } catch (err) { console.error('stepValue error', err); }
-        return val;
-    }
-
-    function moveTick(delta) {
-        if (!state.timelineRange || !state.timelineRange.increments || !state.timelineRange.increments.length) return;
-        state.timelineRange.selectedIndex = Math.max(0, Math.min(state.timelineRange.increments.length - 1, state.timelineRange.selectedIndex + delta));
-        render();
-        // Scroll the scale sidebar to show selection
-        const sb = document.getElementById('scale-sidebar'); const ticks = sb ? sb.querySelectorAll('.scale-tick') : null;
-        if (ticks && ticks[state.timelineRange.selectedIndex]) {
-            ticks[state.timelineRange.selectedIndex].scrollIntoView({ block: 'center' });
-        }
-        // Also scroll the main timeline proportionally
-        const containerHeight = container.scrollHeight - container.clientHeight;
-        const pct = state.timelineRange.selectedIndex / Math.max(1, state.timelineRange.increments.length - 1);
-        container.scrollTop = Math.round(containerHeight * pct);
-    }
-
-    function renderScale() {
-        const sb = document.getElementById('scale-sidebar');
-        if (!state.timelineRange || !state.timelineRange.increments || !sb) { if (sb) sb.style.display = 'none'; return; }
-        sb.style.display = 'block';
-        sb.innerHTML = '';
-        state.timelineRange.increments.forEach((inc, idx) => {
-            const d = document.createElement('div'); d.className = 'scale-tick' + (state.timelineRange.selectedIndex === idx ? ' selected' : ''); d.textContent = inc;
-            d.onclick = () => { state.timelineRange.selectedIndex = idx; render(); };
-            sb.appendChild(d);
+            box.blur();
+            addEvent('');
+          } else if(e.key === 'Escape'){
+            box.blur();
+          }
         });
-        // Ensure the selected tick is visible and the main timeline scrolls proportionally
-        const selectedEl = sb.querySelector('.scale-tick.selected');
-        if (selectedEl) selectedEl.scrollIntoView({ block: 'center' });
-        const containerHeight = container.scrollHeight - container.clientHeight;
-        const pct = state.timelineRange.selectedIndex / Math.max(1, state.timelineRange.increments.length - 1);
-        container.scrollTop = Math.round(containerHeight * pct);
-    }
 
-    // Quick save using current title and filename; falls back to Save As HTML if not set
-    function getSanitizedFilename() {
-        // Use document.title when possible, fallback to timestamped default
-        const baseRaw = (document.title && document.title !== 'andthen') ? document.title : `andthen-${Date.now()}`;
-        // If title already ends with .html, strip it to avoid duplicate extension
-        const base = baseRaw.toLowerCase().endsWith('.html') ? baseRaw.slice(0, -5) : baseRaw;
-        const sanitized = base.replace(/[^A-Za-z0-9-_\.]/g, '-');
-        return sanitized.toLowerCase().endsWith('.html') ? sanitized : sanitized + '.html';
-    }
+        evt.appendChild(point);
+        evt.appendChild(box);
+        eventsEl.appendChild(evt);
 
-    function saveQuick() {
-        // If the document has embedded data and a filename is derivable, export quickly
-        const filename = getSanitizedFilename();
-        saveAsHTML({ filename, title: document.title });
-    }
+        // Ensure the timeline scrolls so the new event is visible and the line extends
+        box.scrollIntoView({behavior:'smooth', block:'center'});
 
-    // Keep saveData for JSON download separately
-    function saveData() {
-        const dataStr = "data:text/json;charset=utf-8," + encodeURIComponent(JSON.stringify(state, null, 2));
-        const downloadAnchorNode = document.createElement('a');
-        downloadAnchorNode.setAttribute("href", dataStr);
-        downloadAnchorNode.setAttribute("download", "timeline_data.json");
-        document.body.appendChild(downloadAnchorNode);
-        downloadAnchorNode.click();
-        downloadAnchorNode.remove();
-    }
+        // Focus the box to edit immediately
+        requestAnimationFrame(()=> box.focus());
 
-    function escapeHtml(s) {
-        return String(s).replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/"/g,'&quot;');
-    }
+        return evt;
+      }
 
-    function saveAsHTML(opts) {
-        // If opts are provided (from quick save), use them and skip prompting
-        const filename = (opts && opts.filename) ? opts.filename : (prompt('Filename (e.g., mytimeline.html):', `andthen-${Date.now()}.html`) || `andthen-${Date.now()}.html`);
-        const pageTitle = (opts && opts.title) ? opts.title : (prompt('Page title:', document.title || 'andthen') || document.title || 'andthen');
-        const jsonData = JSON.stringify(state, null, 2).replace(/</g, '\\u003c');
-        // Escape the closing tag to avoid prematurely closing this script block
-        const dataScript = `<script id="andthen-data" type="application/json">${jsonData}<\/script>`;
+      window.addEvent = function(text){ return createEvent(text); };
 
-        // Build a robust exported document from current DOM. This avoids relying on outerHTML which
-        // can be fragile when scripts contain closing script tag sequences.
-        const headSansScripts = document.head.innerHTML.replace(/<script[\s\S]*?<\/script>/gi, '');
-        const bodySansScripts = document.body.innerHTML.replace(/<script[\s\S]*?<\/script>/gi, '');
-        // Find inline script (this one) to re-embed safely
-        let mainScriptText = '';
-        for (const s of Array.from(document.scripts)) {
-            if (s.textContent && s.textContent.includes('function saveAsHTML')) { mainScriptText = s.textContent; break; }
+      // Minimal key bindings (vim-like to be extended later):
+      // - 'a' : add a new event below and focus it
+      // - 'o' : add a new event below (alias)
+      document.addEventListener('keydown', (e)=>{
+        // if focused on an editable, don't intercept except for specific keys handled by the box
+        const active = document.activeElement;
+        const isEditing = active && active.getAttribute && active.getAttribute('contenteditable') === 'true';
+        if(isEditing) return;
+
+        if(e.key === 'a' || e.key === 'o'){
+          e.preventDefault();
+          addEvent('');
         }
-        if (!mainScriptText && document.scripts.length) mainScriptText = document.scripts[document.scripts.length-1].textContent || '';
-        // Escape sequences that would break embedding into a template literal or close the outer script
-        mainScriptText = mainScriptText.replace(/<\/script>/g, '<\\/script>');
+      });
 
-        // Build HTML using concatenation to avoid template literal interpolation issues
-        const parts = [];
-        parts.push('<!DOCTYPE html>\n<html lang="en">\n<head>\n<meta charset="utf-8">\n');
-        parts.push(headSansScripts.replace(/<title>.*?<\/title>/i, '<title>' + escapeHtml(pageTitle) + '</title>'));
-        parts.push('\n</head>\n<body>\n');
-        parts.push(dataScript + '\n');
-        parts.push(bodySansScripts + '\n');
-        parts.push('<script>\n' + mainScriptText + '\n<\/script>\n');
-        parts.push('</body>\n</html>');
-        const docHtml = parts.join('');
+      // For demo: add a couple of starter events so you see the line extend at load
+      createEvent('First event — welcome to AndThen');
+      createEvent('Second event — press "a" to add a new event');
 
-        const blob = new Blob([docHtml], {type: 'text/html;charset=utf-8'});
-        const url = URL.createObjectURL(blob);
-        const a = document.createElement('a');
-        a.href = url;
-        a.download = filename;
-        document.body.appendChild(a);
-        a.click();
-        a.remove();
-        setTimeout(() => URL.revokeObjectURL(url), 1000);
-    }
-
-    // Import helpers
-    function promptImport() {
-        let input = document.getElementById('file-input');
-        if (!input) {
-            input = document.createElement('input');
-            input.type = 'file';
-            input.id = 'file-input';
-            input.accept = '.json,.html';
-            input.style.display = 'none';
-            input.addEventListener('change', (ev) => {
-                const f = ev.target.files[0];
-                if (!f) return;
-                const reader = new FileReader();
-                reader.onload = function(e) { handleImportedFile(e.target.result); };
-                reader.readAsText(f);
-                input.value = '';
-            });
-            document.body.appendChild(input);
-        }
-        input.click();
-    }
-
-    function handleImportedFile(text) {
-        // Try raw JSON first
-        try {
-            const parsed = JSON.parse(text);
-            if (parsed && Array.isArray(parsed.events)) {
-                state = parsed;
-                state.mode = 'NORMAL';
-                state.selectedIndex = -1;
-                // Ensure timelineRange for imported state
-                if (!state.timelineRange) {
-                    state.timelineRange = computeRangeFromYears(state.startYear || 1800, state.endYear || new Date().getFullYear());
-                } else {
-                    const kind = state.timelineRange.kind || 'years';
-                    const start = state.timelineRange.start || String(state.startYear);
-                    const end = state.timelineRange.end || String(state.endYear);
-                    const computed = computeIncrements(kind, start, end);
-                    state.timelineRange.kind = kind;
-                    state.timelineRange.start = start;
-                    state.timelineRange.end = end;
-                    state.timelineRange.increments = (computed && computed.increments) ? computed.increments : (state.timelineRange.increments || []);
-                    state.timelineRange.selectedIndex = typeof state.timelineRange.selectedIndex === 'number' ? state.timelineRange.selectedIndex : 0;
-                }
-                render();
-                return;
-            }
-        } catch (e) {
-            // Not raw JSON — try to extract embedded script
-        }
-
-        const re = new RegExp('<script[^>]*\\bid=["\\\']andthen-data["\\\"][^>]*>([\\s\\S]*?)<\\/script>', 'i');
-        const m = text.match(re);
-        if (m && m[1]) {
-            try {
-                const parsed = JSON.parse(m[1]);
-                if (parsed && Array.isArray(parsed.events)) {
-                    state = parsed;
-                    state.mode = 'NORMAL';
-                    state.selectedIndex = -1;
-                    // Ensure timelineRange for imported state
-                    if (!state.timelineRange) {
-                        state.timelineRange = computeRangeFromYears(state.startYear || 1800, state.endYear || new Date().getFullYear());
-                    } else {
-                        const kind = state.timelineRange.kind || 'years';
-                        const start = state.timelineRange.start || String(state.startYear);
-                        const end = state.timelineRange.end || String(state.endYear);
-                        const computed = computeIncrements(kind, start, end);
-                        state.timelineRange.kind = kind;
-                        state.timelineRange.start = start;
-                        state.timelineRange.end = end;
-                        state.timelineRange.increments = (computed && computed.increments) ? computed.increments : (state.timelineRange.increments || []);
-                        state.timelineRange.selectedIndex = typeof state.timelineRange.selectedIndex === 'number' ? state.timelineRange.selectedIndex : 0;
-                    }
-                    render();
-                    return;
-                }
-            } catch (err) {
-                console.error('Failed to parse embedded data', err);
-            }
-        }
-
-        alert('Could not find timeline data in the selected file. Select a .json or exported andthen .html file.');
-    }
-
-    // Update help dialog to include new keys
-    document.getElementById('help-list').innerHTML = `
-        <li>j/k: Scroll timeline (or navigate scale when a range is active)</li>
-        <li>g/G: Go to top/bottom of scale when active</li>
-        <li>h/l: Nav events</li>
-        <li>a: Add event</li>
-        <li>i: Edit event</li>
-        <li>d: Delete event</li>
-        <li>0: Set timeline range (years, months, days, dates, numbers, letters)</li>
-        <li>s: Quick save (save as HTML using current title)</li>
-        <li>S: Save as (prompt for filename/title)</li>
-        <li>%: Import from .html or .json</li>
-        <li>?: Show help</li>
-    `;
-
-    // Initial Render
-    render();
-</script>
+    })();
+  </script>
 </body>
 </html>
