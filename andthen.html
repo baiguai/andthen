@@ -60,6 +60,19 @@
     .help-key{min-width:90px; color:var(--line); font-weight:700;}
     .help-desc{color:var(--fg); opacity:0.9;}
 
+    /* Hidden events (filtered out by search) */
+    .event.hidden{display:none;}
+
+    /* Search modal */
+    .search-overlay{position:fixed; inset:0; background:rgba(0,0,0,0.45); display:flex; align-items:flex-start; justify-content:center; z-index:10001; padding-top:80px;}
+    .search-box{width:640px; max-width:92%; background:#050505; border:1px solid rgba(255,255,255,0.06); padding:8px; box-sizing:border-box;}
+    .search-input{width:100%; padding:8px 10px; box-sizing:border-box; background:#000; color:var(--fg); border:1px solid rgba(255,255,255,0.04); outline:none;}
+    .search-info{margin-top:8px; color:var(--fg); opacity:0.9; font-size:13px;}
+    .search-list{margin-top:8px; max-height:50vh; overflow:auto; border-top:1px solid rgba(255,255,255,0.02);}
+    .search-item{padding:10px 8px; border-bottom:1px solid rgba(255,255,255,0.02); display:flex; flex-direction:column; gap:6px; cursor:pointer;}
+    .search-item .title{font-weight:600; color:var(--fg);}
+    .search-item .meta{font-size:12px; color:rgba(255,255,255,0.6); opacity:0.9;}
+    .search-item.active{background:rgba(255,255,255,0.02);}
 
     /* Editable content style */
     .box[contenteditable]{outline:none; caret-color:var(--fg);} 
@@ -420,6 +433,7 @@
         {key:'k', desc:'Move selection up'},
         {key:'g', desc:'Select last event'},
         {key:'G', desc:'Select first event'},
+        {key:'/ ', desc:'Search events (prefix ":" to search titles only)'},
         {key:'i / Enter', desc:'Edit selected event title (INSERT)'},
         {key:'Esc', desc:'Exit to NORMAL mode / stop editing'},
         {key:'s', desc:'Save'},
@@ -499,6 +513,61 @@
         return helpOverlay;
       }
 
+      // Search overlay (/) — filter events
+      let searchOverlay;
+      let preSearchSelected = -1;
+      let matchIndices = [];
+      let matchPointer = 0;
+      function ensureSearch(){
+        if(searchOverlay) return searchOverlay;
+        searchOverlay = document.createElement('div');
+        searchOverlay.className = 'search-overlay';
+        searchOverlay.style.display = 'none';
+
+        const box = document.createElement('div'); box.className = 'search-box';
+        const input = document.createElement('input'); input.className = 'search-input'; input.placeholder = "Search (prefix with ':' to search titles only)";
+        const info = document.createElement('div'); info.className = 'search-info'; info.textContent = '';
+        box.appendChild(input); box.appendChild(info);
+        searchOverlay.appendChild(box);
+        document.body.appendChild(searchOverlay);
+
+        function render(q){
+          matchIndices = [];
+          const isTitleOnly = q.startsWith(':');
+          const qstr = (isTitleOnly ? q.slice(1) : q).trim().toLowerCase();
+          for(let i=0;i<eventsEl.children.length;i++){
+            const evt = eventsEl.children[i];
+            const title = (evt.querySelector('.title')||{innerText:''}).innerText.toLowerCase();
+            const details = (evt.querySelector('.details')||{value:''}).value.toLowerCase();
+            let match = false;
+            if(qstr === '') match = true;
+            else if(isTitleOnly) match = title.indexOf(qstr) !== -1;
+            else match = (title + ' ' + details).indexOf(qstr) !== -1;
+            evt.classList.toggle('hidden', !match);
+            if(match) matchIndices.push(i);
+          }
+          info.textContent = matchIndices.length + ' match' + (matchIndices.length === 1 ? '' : 'es');
+          if(matchIndices.length){ matchPointer = 0; selectIndex(matchIndices[matchPointer]); }
+          else clearSelection();
+        }
+
+        input.addEventListener('input', ()=> render(input.value));
+        input.addEventListener('keydown', (ev)=>{
+          if(ev.key === 'Escape'){ hideSearch(); ev.preventDefault(); }
+          if(ev.key === 'Enter'){ if(matchIndices.length){ selectIndex(matchIndices[matchPointer]); hideSearch(); } ev.preventDefault(); }
+          if(ev.key === 'ArrowDown'){ if(matchIndices.length){ matchPointer = Math.min(matchPointer+1, matchIndices.length-1); selectIndex(matchIndices[matchPointer]); } ev.preventDefault(); }
+          if(ev.key === 'ArrowUp'){ if(matchIndices.length){ matchPointer = Math.max(matchPointer-1, 0); selectIndex(matchIndices[matchPointer]); } ev.preventDefault(); }
+        });
+
+        searchOverlay.addEventListener('click', (ev)=>{ if(ev.target === searchOverlay) hideSearch(); });
+
+        function showSearch(){ ensureSearch(); preSearchSelected = selectedIndex; searchOverlay.style.display = 'flex'; const inp = searchOverlay.querySelector('.search-input'); inp.value = ''; setTimeout(()=>{ inp.focus(); render(''); }, 10); }
+        function hideSearch(){ searchOverlay.style.display = 'none'; for(const e of eventsEl.children) e.classList.remove('hidden'); if(preSearchSelected !== -1) selectIndex(preSearchSelected); else clearSelection(); }
+
+        window.showSearch = showSearch; window.hideSearch = hideSearch;
+        return searchOverlay;
+      }
+
       // Key handling
       document.addEventListener('keydown', (e)=>{
         const active = document.activeElement;
@@ -510,16 +579,21 @@
           return;
         }
 
-        // if help overlay open, route to it
-        if(helpOverlay && helpOverlay.style.display === 'flex'){
+        // if help or search overlay open, route to it
+        if((helpOverlay && helpOverlay.style.display === 'flex') || (searchOverlay && searchOverlay.style.display === 'flex')){
           if(e.key === 'Escape'){
-            hideHelp();
+            if(helpOverlay && helpOverlay.style.display === 'flex') hideHelp();
+            if(searchOverlay && searchOverlay.style.display === 'flex') hideSearch();
             e.preventDefault();
           }
-          return; // don't process other global keys while help is open
+          return; // don't process other global keys while help or search is open
         }
 
         if(isEditing) return;
+
+        if(e.key === '/'){
+          e.preventDefault(); ensureSearch(); showSearch(); return;
+        }
 
         if(e.key === 'a' || e.key === 'o'){
           e.preventDefault();
