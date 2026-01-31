@@ -34,19 +34,17 @@
     .title[contenteditable]{outline:none; caret-color:var(--fg);}
     .details{display:block; width:100%; margin-top:8px; background:transparent; color:var(--fg); border:0; padding:6px 6px; box-sizing:border-box; font-family:inherit; font-size:13px; min-height:64px; resize:vertical; overflow:hidden; max-height:60vh;}
     /* Left and right alignment relative to the center line */
-    .event.left{justify-content:flex-end;}        /* box to the left side */
-    .event.right{justify-content:flex-start;}      /* box to the right side */
-    .event.left .content{ text-align:right; }
-    .event.right .content{ text-align:left; }
-
-    /* Left and right alignment relative to the center line */
-    .event.left{justify-content:flex-end;}        /* box to the left side */
-    .event.right{justify-content:flex-start;}      /* box to the right side */
-    .event.left .box{ text-align:right; }
-    .event.right .box{ text-align:left; }
+    .event.left{justify-content:flex-start;}        /* box to the left side (visual) */
+    .event.right{justify-content:flex-end;}      /* box to the right side (visual) */
+    .event.left .content{ text-align:left; }
+    .event.right .content{ text-align:right; }
 
     /* Small connector marker at the center line for each event (white) */
-    .point{position:absolute; left:50%; transform:translate(-50%, -50%); width:10px; height:10px; border:1px solid var(--line); background:var(--line); box-sizing:border-box;}
+    .point{position:absolute; left:50%; transform:translate(-50%, -50%); width:10px; height:10px; border:1px solid var(--line); background:var(--line); box-sizing:border-box; z-index:3}
+
+    /* SVG connectors (line from marker to event border) */
+    svg.connectors{position:absolute; left:0; top:0; width:100%; height:100%; pointer-events:none; z-index:1}
+    .events{position:relative; display:flex; flex-direction:column; gap:28px; z-index:2}
 
     /* Selected event in NORMAL mode */
     .event.selected .content{border-color:var(--line); box-shadow:0 0 0 1px rgba(255,255,255,0.03);}
@@ -92,8 +90,7 @@
 <body>
   <div id="editor">
     <div class="timeline">
-      <div class="line" aria-hidden="true"></div>
-      <div class="events" id="events"></div>
+      <div class="line" aria-hidden="true"></div>      <svg class="connectors" aria-hidden="true"></svg>      <div class="events" id="events"></div>
     </div>
   </div>
 
@@ -161,6 +158,8 @@
             title.blur();
           }
         });
+        // schedule connector updates while typing in title
+        title.addEventListener('input', ()=> scheduleUpdate());
 
         // Escape in details exits insert mode
         details.addEventListener('keydown', (e)=>{
@@ -187,6 +186,7 @@
         count = eventsEl.children.length;
 
         title.scrollIntoView({behavior:'smooth', block:'center'});
+        scheduleUpdate();
 
         // Focus and select only if opts.focus is not explicitly false
         if(opts.focus !== false){
@@ -232,7 +232,53 @@
           const max = Math.max(160, Math.min(window.innerHeight * 0.6, 800));
           const h = Math.min(el.scrollHeight, max);
           el.style.height = h + 'px';
+          scheduleUpdate();
         }catch(e){/* ignore */}
+      }
+
+      // Connectors: draw SVG lines from the center of the marker to the nearest border center of its event
+      let _updateScheduled = false;
+      function scheduleUpdate(){
+        if(_updateScheduled) return;
+        _updateScheduled = true;
+        requestAnimationFrame(()=>{ _updateScheduled = false; updateConnectors(); });
+      }
+
+      function updateConnectors(){
+        const svg = document.querySelector('.timeline svg.connectors');
+        const timeline = document.querySelector('.timeline');
+        if(!svg || !timeline) return;
+        // size svg to timeline
+        const rect = timeline.getBoundingClientRect();
+        svg.setAttribute('width', rect.width);
+        svg.setAttribute('height', rect.height);
+        svg.setAttribute('viewBox', `0 0 ${rect.width} ${rect.height}`);
+        // clear previous lines
+        while(svg.firstChild) svg.removeChild(svg.firstChild);
+
+        for(const evt of eventsEl.children){
+          const point = evt.querySelector('.point');
+          const content = evt.querySelector('.content');
+          if(!point || !content) continue;
+          const pr = point.getBoundingClientRect();
+          const cr = content.getBoundingClientRect();
+          const px = pr.left - rect.left + pr.width/2;
+          const py = pr.top - rect.top + pr.height/2;
+          // choose border X based on event side: left events connect to their right edge, right events connect to their left edge
+          const side = evt.classList.contains('left') ? 'left' : 'right';
+          const bx = side === 'left' ? (cr.right - rect.left) : (cr.left - rect.left);
+          const by = cr.top - rect.top + cr.height/2;
+
+          const line = document.createElementNS('http://www.w3.org/2000/svg','line');
+          line.setAttribute('x1', px);
+          line.setAttribute('y1', py);
+          line.setAttribute('x2', bx);
+          line.setAttribute('y2', by);
+          line.setAttribute('stroke', 'rgba(255,255,255,0.14)');
+          line.setAttribute('stroke-width', '1');
+          line.setAttribute('stroke-linecap', 'butt');
+          svg.appendChild(line);
+        }
       }
 
       function clearEvents(){
@@ -247,6 +293,8 @@
         for(const item of data){
           createEvent(item.title || '', { side: item.side || undefined, details: item.details || '', focus: false });
         }
+        // update connectors after rendering
+        scheduleUpdate();
       }
 
       function addEvent(text, opts = {}){
@@ -324,6 +372,11 @@
 
       window.saveAndThen = save; // expose for debugging
       window.saveAsAndThen = saveAs;
+
+      // keep connectors updated on resize/scroll
+      window.addEventListener('resize', scheduleUpdate);
+      const editorEl = document.getElementById('editor');
+      if(editorEl) editorEl.addEventListener('scroll', scheduleUpdate);
 
       // Minimal status indicator (non-intrusive)
       let statusEl;
@@ -412,6 +465,8 @@
         const el = eventsEl.children[selectedIndex];
         el.classList.add('selected');
         el.scrollIntoView({behavior:'smooth', block:'center'});
+        // connectors may need update after scroll or position change
+        requestAnimationFrame(()=> scheduleUpdate());
       }
       function selectFirst(){
         if(eventsEl.children.length === 0) return;
@@ -433,6 +488,7 @@
         }
         const newIdx = Math.min(idx, eventsEl.children.length - 1);
         selectIndex(newIdx);
+        scheduleUpdate();
         showStatus('Deleted');
       }
 
@@ -446,6 +502,7 @@
         eventsEl.insertBefore(node, prev);
         // update selection
         selectIndex(idx - 1);
+        scheduleUpdate();
         showStatus('Moved up');
       }
 
@@ -458,27 +515,30 @@
         // insert node after next
         eventsEl.insertBefore(node, next.nextSibling);
         selectIndex(idx + 1);
+        scheduleUpdate();
         showStatus('Moved down');
-      }
-
-      function moveSelectedRight(){
-        if(selectedIndex === -1) return;
-        const el = eventsEl.children[selectedIndex];
-        if(!el) return;
-        if(el.classList.contains('left')){ showStatus('Already right'); return; }
-        el.classList.remove('right');
-        el.classList.add('left');
-        showStatus('Moved right');
       }
 
       function moveSelectedLeft(){
         if(selectedIndex === -1) return;
         const el = eventsEl.children[selectedIndex];
         if(!el) return;
-        if(el.classList.contains('right')){ showStatus('Already left'); return; }
+        if(el.classList.contains('left')){ showStatus('Already left'); return; }
+        el.classList.remove('right');
+        el.classList.add('left');
+        scheduleUpdate();
+        showStatus('Moved left');
+      }
+
+      function moveSelectedRight(){
+        if(selectedIndex === -1) return;
+        const el = eventsEl.children[selectedIndex];
+        if(!el) return;
+        if(el.classList.contains('right')){ showStatus('Already right'); return; }
         el.classList.remove('left');
         el.classList.add('right');
-        showStatus('Moved left');
+        scheduleUpdate();
+        showStatus('Moved right');
       }
 
       function selectNext(){
@@ -779,6 +839,8 @@
           createEvent('', { focus: false });
           setMode('normal');
         }
+        // ensure connectors are in sync on load
+        scheduleUpdate();
       });
 
     })();
