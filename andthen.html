@@ -461,6 +461,26 @@
         showStatus('Moved down');
       }
 
+      function moveSelectedRight(){
+        if(selectedIndex === -1) return;
+        const el = eventsEl.children[selectedIndex];
+        if(!el) return;
+        if(el.classList.contains('left')){ showStatus('Already right'); return; }
+        el.classList.remove('right');
+        el.classList.add('left');
+        showStatus('Moved right');
+      }
+
+      function moveSelectedLeft(){
+        if(selectedIndex === -1) return;
+        const el = eventsEl.children[selectedIndex];
+        if(!el) return;
+        if(el.classList.contains('right')){ showStatus('Already left'); return; }
+        el.classList.remove('left');
+        el.classList.add('right');
+        showStatus('Moved left');
+      }
+
       function selectNext(){
         if(eventsEl.children.length === 0) return;
         if(selectedIndex === -1) selectIndex(0);
@@ -492,6 +512,8 @@
         {key:'/ ', desc:'Search events (prefix ":" to search titles only)'},
         {key:'J', desc:'Move selected event down'},
         {key:'K', desc:'Move selected event up'},
+        {key:'h', desc:'Move selected event left'},
+        {key:'l', desc:'Move selected event right'},
         {key:'D', desc:'Delete selected event'},
         {key:'i / Enter', desc:'Edit selected event title (INSERT)'},
         {key:'Esc', desc:'Exit to NORMAL mode / stop editing'},
@@ -670,6 +692,13 @@
         }
         if(e.key === 'k'){
           e.preventDefault(); selectPrev(); return;
+        }
+
+        if(e.key === 'h'){
+          e.preventDefault(); moveSelectedLeft(); return;
+        }
+        if(e.key === 'l'){
+          e.preventDefault(); moveSelectedRight(); return;
         }
 
         if(e.key === 'J'){
