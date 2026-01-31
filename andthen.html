@@ -17,7 +17,7 @@
     #editor{height:100vh; overflow:auto; box-sizing:border-box;}
 
     /* Centered timeline column */
-    .timeline{position:relative; width:100%; max-width:900px; margin:0 auto; padding:48px 20px; box-sizing:border-box;}
+    .timeline{position:relative; width:100%; max-width:900px; margin:0 auto; padding:48px 20px; box-sizing:border-box; min-height:calc(100vh - 96px);} 
 
     /* The vertical white line (1px) — it fills the timeline height (extends as events are added) */
     .timeline .line{position:absolute; left:50%; top:0; bottom:0; width:1px; background:var(--line); transform:translateX(-50%);} 
@@ -62,32 +62,47 @@
   </div>
 
   <script>
-    // Timeline Editor (minimal)
-    // - White on black theme
-    // - Center vertical line (1px) automatically extends as events are added
-    // - Flat 1px dim gray borders for event boxes
-    // - Simple 'a' keybinding to add a new event (no visible UI)
+    // Timeline Editor (with save/load)
+    // - Data embedded as JSON in a <script id="andthen-data" type="application/json"> block
+    // - 's' = save (silent), 'S' = save as (prompt for filename + title), Ctrl/Cmd+S = save
 
     (function(){
       const eventsEl = document.getElementById('events');
       let count = 0;
 
-      function createEvent(text){
+      // Track current filename/title (try to derive from location)
+      let currentFilename = (function(){
+        try{
+          const path = decodeURIComponent(location.pathname || '');
+          const last = path.split('/').pop();
+          return last || 'andthen.html';
+        }catch(e){ return 'andthen.html'; }
+      })();
+      let currentTitle = document.title || 'AndThen';
+
+      // Editor mode: 'normal' or 'insert' — start in NORMAL mode (no selection)
+      let mode = 'normal';
+      function setMode(m){
+        mode = m;
+        // subtle transient indicator
+        try{ if(typeof showStatus === 'function') showStatus(m.toUpperCase()); }catch(e){}
+      }
+
+      function createEvent(text, opts = {}){
         count++;
+        const side = opts.side || ((count % 2 === 1) ? 'left' : 'right');
         const evt = document.createElement('div');
-        evt.className = 'event ' + ((count % 2 === 1) ? 'left' : 'right');
+        evt.className = 'event ' + side;
 
         const point = document.createElement('div');
         point.className = 'point';
-        // Position the dot vertically in line with the box top + padding
-        // We'll place it at the center of the box's top edge via CSS transform
 
         const box = document.createElement('div');
         box.className = 'box';
         box.setAttribute('contenteditable', 'true');
-        box.innerText = text || ('Event ' + count);
+        // default to empty; caller may pass initial text
+        box.innerText = text || '';
 
-        // When the user presses Enter inside a box, stop editing and create a new event below.
         box.addEventListener('keydown', (e)=>{
           if(e.key === 'Enter'){
             e.preventDefault();
@@ -95,42 +110,274 @@
             addEvent('');
           } else if(e.key === 'Escape'){
             box.blur();
+            // blur handler will set mode back to normal
           }
+        });
+
+        // when editing stops, go back to normal mode
+        box.addEventListener('blur', ()=>{
+          setMode('normal');
         });
 
         evt.appendChild(point);
         evt.appendChild(box);
         eventsEl.appendChild(evt);
 
-        // Ensure the timeline scrolls so the new event is visible and the line extends
         box.scrollIntoView({behavior:'smooth', block:'center'});
 
-        // Focus the box to edit immediately
-        requestAnimationFrame(()=> box.focus());
+        // Focus and select only if opts.focus is not explicitly false
+        if(opts.focus !== false){
+          requestAnimationFrame(()=>{
+            box.focus();
+            setMode('insert');
+            try{
+              const sel = window.getSelection();
+              const range = document.createRange();
+              range.selectNodeContents(box);
+              if(box.innerText && box.innerText.length){
+                sel.removeAllRanges();
+                sel.addRange(range);
+              } else {
+                range.collapse(true); // caret at start
+                sel.removeAllRanges();
+                sel.addRange(range);
+              }
+            }catch(e){ /* ignore selection errors */ }
+          });
+        }
 
         return evt;
       }
 
-      window.addEvent = function(text){ return createEvent(text); };
+      function getEventsData(){
+        const out = [];
+        for(const evt of eventsEl.children){
+          const box = evt.querySelector('.box');
+          if(!box) continue;
+          out.push({ text: box.innerText, side: evt.classList.contains('left') ? 'left' : 'right' });
+        }
+        return out;
+      }
 
-      // Minimal key bindings (vim-like to be extended later):
-      // - 'a' : add a new event below and focus it
-      // - 'o' : add a new event below (alias)
+      function clearEvents(){
+        eventsEl.innerHTML = '';
+        count = 0;
+      }
+
+      function renderFromData(data){
+        clearEvents();
+        if(!Array.isArray(data)) return;
+        for(const item of data){
+          createEvent(item.text || '', { side: item.side || undefined, focus: false });
+        }
+      }
+
+      function addEvent(text, opts = {}){
+        const evt = createEvent(text, opts);
+        if(opts.focus !== false){ setMode('insert'); }
+        return evt;
+      }
+      window.addEvent = addEvent;
+
+      // Save / export
+      function serializeData(){
+        return JSON.stringify({ version:1, title: currentTitle, events: getEventsData() }, null, 2);
+      }
+
+      function buildExportHTML(title, dataJSON){
+        // Clone the document and inject the data script
+        const clone = document.documentElement.cloneNode(true);
+        // update title
+        const titleEl = clone.querySelector('title');
+        if(titleEl) titleEl.textContent = title;
+        // clear existing rendered events in the clone to avoid duplication on load
+        const eventsClone = clone.querySelector('#events');
+        if(eventsClone) eventsClone.innerHTML = '';
+        // find or create data script
+        let dataScript = clone.querySelector('#andthen-data');
+        if(!dataScript){
+          dataScript = clone.ownerDocument.createElement('script');
+          dataScript.setAttribute('id','andthen-data');
+          dataScript.setAttribute('type','application/json');
+          // append before closing body
+          const body = clone.querySelector('body') || clone;
+          body.appendChild(dataScript);
+        }
+        dataScript.textContent = dataJSON;
+
+        const serialized = '<!doctype html>\n' + clone.outerHTML;
+        return serialized;
+      }
+
+      function downloadHTML(filename, html){
+        const blob = new Blob([html], { type: 'text/html' });
+        const url = URL.createObjectURL(blob);
+        const a = document.createElement('a');
+        a.href = url;
+        a.download = filename;
+        document.body.appendChild(a);
+        a.click();
+        a.remove();
+        URL.revokeObjectURL(url);
+        showStatus('Saved ' + filename);
+      }
+
+      function saveAs(){
+        const name = prompt('Save as filename (include .html):', currentFilename);
+        if(!name) return;
+        const filename = name.match(/\.html?$/i) ? name : (name + '.html');
+        const title = prompt('Document title:', currentTitle) || currentTitle;
+        currentFilename = filename;
+        currentTitle = title;
+        const html = buildExportHTML(currentTitle, serializeData());
+        downloadHTML(currentFilename, html);
+      }
+
+      function save(){
+        // blur active editable to ensure content is up to date
+        try{ if(document.activeElement && document.activeElement.blur) document.activeElement.blur(); }catch(e){}
+        const html = buildExportHTML(currentTitle, serializeData());
+        downloadHTML(currentFilename, html);
+      }
+
+      window.saveAndThen = save; // expose for debugging
+      window.saveAsAndThen = saveAs;
+
+      // Minimal status indicator (non-intrusive)
+      let statusEl;
+      function showStatus(msg){
+        if(!statusEl){
+          statusEl = document.createElement('div');
+          statusEl.style.position = 'fixed';
+          statusEl.style.right = '12px';
+          statusEl.style.bottom = '12px';
+          statusEl.style.padding = '6px 10px';
+          statusEl.style.background = 'rgba(255,255,255,0.06)';
+          statusEl.style.border = '1px solid var(--border)';
+          statusEl.style.color = 'var(--fg)';
+          statusEl.style.fontSize = '12px';
+          statusEl.style.zIndex = 9999;
+          document.body.appendChild(statusEl);
+        }
+        statusEl.textContent = msg;
+        statusEl.style.opacity = '1';
+        clearTimeout(statusEl._t);
+        statusEl._t = setTimeout(()=>{ statusEl.style.opacity = '0'; }, 1600);
+      }
+
+      // Import handler (U) — hidden file input
+      let importInput;
+      function ensureImportInput(){
+        if(importInput) return importInput;
+        importInput = document.createElement('input');
+        importInput.type = 'file';
+        importInput.accept = '.html,.htm,text/html';
+        importInput.style.display = 'none';
+        importInput.addEventListener('change', (e)=>{
+          const f = importInput.files && importInput.files[0];
+          if(f) handleImportFile(f);
+          importInput.value = '';
+        });
+        document.body.appendChild(importInput);
+        return importInput;
+      }
+
+      function handleImportFile(file){
+        const reader = new FileReader();
+        reader.onload = function(){
+          const text = reader.result;
+          try{
+            const doc = new DOMParser().parseFromString(text, 'text/html');
+            const dataEl = doc.getElementById('andthen-data');
+            let parsed = null;
+            if(dataEl && dataEl.textContent){
+              parsed = JSON.parse(dataEl.textContent);
+            } else {
+              // fallback: regex search
+              const m = text.match(/<script[^>]*id=["']andthen-data["'][^>]*>([\s\S]*?)<\/script>/i);
+              if(m && m[1]) parsed = JSON.parse(m[1]);
+            }
+            if(parsed && Array.isArray(parsed.events)){
+              currentFilename = file.name || currentFilename;
+              currentTitle = parsed.title || (file.name ? file.name.replace(/\.html?$/i,'') : currentTitle);
+              document.title = currentTitle;
+              renderFromData(parsed.events);
+              window.scrollTo(0,0);
+              showStatus('Imported ' + currentFilename);
+            } else {
+              showStatus('No valid data found in ' + (file.name || 'file'));
+            }
+          }catch(err){
+            console.error('import error', err);
+            showStatus('Failed to import: ' + (file.name || 'file'));
+          }
+        };
+        reader.readAsText(file);
+      }
+
+      function triggerImport(){ ensureImportInput().click(); }
+
+      // Key bindings
       document.addEventListener('keydown', (e)=>{
-        // if focused on an editable, don't intercept except for specific keys handled by the box
         const active = document.activeElement;
         const isEditing = active && active.getAttribute && active.getAttribute('contenteditable') === 'true';
+        // allow Ctrl/Cmd+S even while editing
+        if((e.ctrlKey || e.metaKey) && e.key.toLowerCase() === 's'){
+          e.preventDefault();
+          save();
+          return;
+        }
+        // do not intercept when editing
         if(isEditing) return;
 
         if(e.key === 'a' || e.key === 'o'){
           e.preventDefault();
           addEvent('');
+          return;
+        }
+
+        if(e.key === 's' && !e.shiftKey){
+          e.preventDefault();
+          save();
+          return;
+        }
+        if(e.key === 'S' || (e.key === 's' && e.shiftKey)){
+          e.preventDefault();
+          saveAs();
+          return;
+        }
+
+        if(e.key === 'U' || (e.key === 'u' && e.shiftKey)){
+          e.preventDefault();
+          triggerImport();
+          return;
         }
       });
 
-      // For demo: add a couple of starter events so you see the line extend at load
-      createEvent('First event — welcome to AndThen');
-      createEvent('Second event — press "a" to add a new event');
+      // Load initial data from embedded JSON if present
+      function loadFromEmbedded(){
+        const el = document.getElementById('andthen-data');
+        if(!el) return false;
+        try{
+          const parsed = JSON.parse(el.textContent || el.innerText || '{}');
+          if(parsed && Array.isArray(parsed.events)){
+            if(parsed.title){ document.title = parsed.title; currentTitle = parsed.title; }
+            renderFromData(parsed.events);
+            return true;
+          }
+        }catch(e){ console.warn('andthen: failed to parse embedded data', e); }
+        return false;
+      }
+
+      // On load
+      document.addEventListener('DOMContentLoaded', ()=>{
+        const loaded = loadFromEmbedded();
+        if(!loaded){
+          // no embedded data — start with a single empty event for convenience, but remain in NORMAL mode
+          createEvent('', { focus: false });
+          setMode('normal');
+        }
+      });
 
     })();
   </script>
