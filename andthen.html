@@ -9,7 +9,7 @@
       --bg: #000;
       --fg: #fff;
       --line: #fff;
-      --border: dimgray; /* flat 1px dim gray borders */
+      --border: rgba(255,255,255,0.06); /* barely visible gray border */
     }
     html,body{height:100%; margin:0; background:var(--bg); color:var(--fg); font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, "Roboto Mono", monospace;}
 
@@ -27,7 +27,17 @@
 
     /* Each event occupies the full width but its content is boxed left or right of the center line */
     .event{position:relative; display:flex; width:100%; align-items:flex-start;}
-    .box{border:1px solid var(--border); padding:10px 12px; color:var(--fg); max-width:46%; box-sizing:border-box; background:transparent; border-radius:0;}
+
+    /* Event content (title + details) */
+    .content{max-width:46%; box-sizing:border-box; border:1px solid var(--border); padding:10px; background:transparent;}
+    .title{padding:4px 6px; color:var(--fg); background:transparent; border-radius:0; font-weight:600;}
+    .title[contenteditable]{outline:none; caret-color:var(--fg);}
+    .details{display:block; width:100%; margin-top:8px; background:transparent; color:var(--fg); border:0; padding:6px 6px; box-sizing:border-box; font-family:inherit; font-size:13px; min-height:64px; resize:vertical; overflow:hidden; max-height:60vh;}
+    /* Left and right alignment relative to the center line */
+    .event.left{justify-content:flex-end;}        /* box to the left side */
+    .event.right{justify-content:flex-start;}      /* box to the right side */
+    .event.left .content{ text-align:right; }
+    .event.right .content{ text-align:left; }
 
     /* Left and right alignment relative to the center line */
     .event.left{justify-content:flex-end;}        /* box to the left side */
@@ -35,8 +45,21 @@
     .event.left .box{ text-align:right; }
     .event.right .box{ text-align:left; }
 
-    /* Small connector dot at the center line for each event */
-    .point{position:absolute; left:50%; transform:translate(-50%, -50%); width:10px; height:10px; border:1px solid var(--border); background:var(--bg); box-sizing:border-box;}
+    /* Small connector marker at the center line for each event (white) */
+    .point{position:absolute; left:50%; transform:translate(-50%, -50%); width:10px; height:10px; border:1px solid var(--line); background:var(--line); box-sizing:border-box;}
+
+    /* Selected event in NORMAL mode */
+    .event.selected .content{border-color:var(--line); box-shadow:0 0 0 1px rgba(255,255,255,0.03);}
+
+    /* Help modal */
+    .help-overlay{position:fixed; inset:0; background:rgba(0,0,0,0.6); display:flex; align-items:center; justify-content:center; z-index:10000;}
+    .help-modal{width:640px; max-width:92%; max-height:80vh; background:#050505; border:1px solid rgba(255,255,255,0.06); padding:12px; box-sizing:border-box; overflow:hidden;}
+    .help-input{width:100%; padding:8px 10px; box-sizing:border-box; background:#000; color:var(--fg); border:1px solid rgba(255,255,255,0.04); outline:none;}
+    .help-list{margin-top:8px; overflow:auto; max-height:60vh;}
+    .help-item{display:flex; gap:12px; padding:8px 6px; border-bottom:1px solid rgba(255,255,255,0.02);}
+    .help-key{min-width:90px; color:var(--line); font-weight:700;}
+    .help-desc{color:var(--fg); opacity:0.9;}
+
 
     /* Editable content style */
     .box[contenteditable]{outline:none; caret-color:var(--fg);} 
@@ -88,7 +111,7 @@
         try{ if(typeof showStatus === 'function') showStatus(m.toUpperCase()); }catch(e){}
       }
 
-      function createEvent(text, opts = {}){
+      function createEvent(titleText, opts = {}){
         count++;
         const side = opts.side || ((count % 2 === 1) ? 'left' : 'right');
         const evt = document.createElement('div');
@@ -97,44 +120,62 @@
         const point = document.createElement('div');
         point.className = 'point';
 
-        const box = document.createElement('div');
-        box.className = 'box';
-        box.setAttribute('contenteditable', 'true');
-        // default to empty; caller may pass initial text
-        box.innerText = text || '';
+        const content = document.createElement('div');
+        content.className = 'content';
 
-        box.addEventListener('keydown', (e)=>{
+        const title = document.createElement('div');
+        title.className = 'title';
+        title.setAttribute('contenteditable', 'true');
+        title.innerText = titleText || '';
+
+        const details = document.createElement('textarea');
+        details.className = 'details';
+        details.value = opts.details || '';
+        // size to content
+        autosizeTextarea(details);
+        details.addEventListener('input', ()=> autosizeTextarea(details));
+
+        // Enter in title creates a new event (like before)
+        title.addEventListener('keydown', (e)=>{
           if(e.key === 'Enter'){
             e.preventDefault();
-            box.blur();
-            addEvent('');
+            title.blur();
+            addEvent('', { focus: true });
           } else if(e.key === 'Escape'){
-            box.blur();
-            // blur handler will set mode back to normal
+            title.blur();
+          }
+        });
+
+        // Escape in details exits insert mode
+        details.addEventListener('keydown', (e)=>{
+          if(e.key === 'Escape'){
+            details.blur();
           }
         });
 
         // when editing stops, go back to normal mode
-        box.addEventListener('blur', ()=>{
-          setMode('normal');
-        });
+        title.addEventListener('blur', ()=>{ setMode('normal'); });
+        details.addEventListener('blur', ()=>{ setMode('normal'); });
+
+        content.appendChild(title);
+        content.appendChild(details);
 
         evt.appendChild(point);
-        evt.appendChild(box);
+        evt.appendChild(content);
         eventsEl.appendChild(evt);
 
-        box.scrollIntoView({behavior:'smooth', block:'center'});
+        title.scrollIntoView({behavior:'smooth', block:'center'});
 
         // Focus and select only if opts.focus is not explicitly false
         if(opts.focus !== false){
           requestAnimationFrame(()=>{
-            box.focus();
+            title.focus();
             setMode('insert');
             try{
               const sel = window.getSelection();
               const range = document.createRange();
-              range.selectNodeContents(box);
-              if(box.innerText && box.innerText.length){
+              range.selectNodeContents(title);
+              if(title.innerText && title.innerText.length){
                 sel.removeAllRanges();
                 sel.addRange(range);
               } else {
@@ -152,23 +193,34 @@
       function getEventsData(){
         const out = [];
         for(const evt of eventsEl.children){
-          const box = evt.querySelector('.box');
-          if(!box) continue;
-          out.push({ text: box.innerText, side: evt.classList.contains('left') ? 'left' : 'right' });
+          const title = evt.querySelector('.title');
+          const details = evt.querySelector('.details');
+          out.push({ title: title ? title.innerText : '', details: details ? details.value : '', side: evt.classList.contains('left') ? 'left' : 'right' });
         }
         return out;
+      }
+
+      function autosizeTextarea(el){
+        try{
+          if(!el) return;
+          el.style.height = 'auto';
+          const max = Math.max(160, Math.min(window.innerHeight * 0.6, 800));
+          const h = Math.min(el.scrollHeight, max);
+          el.style.height = h + 'px';
+        }catch(e){/* ignore */}
       }
 
       function clearEvents(){
         eventsEl.innerHTML = '';
         count = 0;
+        clearSelection();
       }
 
       function renderFromData(data){
         clearEvents();
         if(!Array.isArray(data)) return;
         for(const item of data){
-          createEvent(item.text || '', { side: item.side || undefined, focus: false });
+          createEvent(item.title || '', { side: item.side || undefined, details: item.details || '', focus: false });
         }
       }
 
@@ -317,23 +369,180 @@
 
       function triggerImport(){ ensureImportInput().click(); }
 
-      // Key bindings
+      // Navigation / selection state
+      let selectedIndex = -1;
+      function clearSelection(){
+        selectedIndex = -1;
+        for(const e of eventsEl.children) e.classList.remove('selected');
+      }
+      function selectIndex(i){
+        if(i < 0 || i >= eventsEl.children.length){ return; }
+        clearSelection();
+        selectedIndex = i;
+        const el = eventsEl.children[selectedIndex];
+        el.classList.add('selected');
+        el.scrollIntoView({behavior:'smooth', block:'center'});
+      }
+      function selectFirst(){
+        if(eventsEl.children.length === 0) return;
+        selectIndex(0);
+      }
+      function selectLast(){
+        if(eventsEl.children.length === 0) return;
+        selectIndex(eventsEl.children.length - 1);
+      }
+
+      function selectNext(){
+        if(eventsEl.children.length === 0) return;
+        if(selectedIndex === -1) selectIndex(0);
+        else selectIndex(Math.min(eventsEl.children.length - 1, selectedIndex + 1));
+      }
+      function selectPrev(){
+        if(eventsEl.children.length === 0) return;
+        if(selectedIndex === -1) selectIndex(eventsEl.children.length - 1);
+        else selectIndex(Math.max(0, selectedIndex - 1));
+      }
+
+      function enterInsertOnSelected(){
+        if(selectedIndex === -1) return;
+        const el = eventsEl.children[selectedIndex];
+        const title = el.querySelector('.title');
+        if(title){
+          title.focus();
+          setMode('insert');
+          try{ const sel = window.getSelection(); const range = document.createRange(); range.selectNodeContents(title); range.collapse(true); sel.removeAllRanges(); sel.addRange(range);}catch(e){}
+        }
+      }
+
+      const KEY_BINDINGS = [
+        {key:'a / o', desc:'Add event below (INSERT)'},
+        {key:'j', desc:'Move selection down'},
+        {key:'k', desc:'Move selection up'},
+        {key:'g', desc:'Select last event'},
+        {key:'G', desc:'Select first event'},
+        {key:'i / Enter', desc:'Edit selected event title (INSERT)'},
+        {key:'Esc', desc:'Exit to NORMAL mode / stop editing'},
+        {key:'s', desc:'Save'},
+        {key:'S', desc:'Save As (prompt)'},
+        {key:'Ctrl/Cmd+S', desc:'Save'},
+        {key:'U', desc:'Import .html file (replace timeline)'},
+        {key:'?', desc:'Show this help (filterable)'}
+      ];
+
+      // create help modal
+      let helpOverlay;
+      function ensureHelp(){
+        if(helpOverlay) return helpOverlay;
+        helpOverlay = document.createElement('div');
+        helpOverlay.className = 'help-overlay';
+        helpOverlay.style.display = 'none';
+
+        const modal = document.createElement('div');
+        modal.className = 'help-modal';
+
+        const input = document.createElement('input');
+        input.className = 'help-input';
+        input.placeholder = "Filter (prefix with ':' to filter keys only)";
+
+        const list = document.createElement('div');
+        list.className = 'help-list';
+
+        modal.appendChild(input);
+        modal.appendChild(list);
+        helpOverlay.appendChild(modal);
+        document.body.appendChild(helpOverlay);
+
+        function renderList(q){
+          list.innerHTML = '';
+          const isKeyOnly = q.startsWith(':');
+          const qstr = (isKeyOnly ? q.slice(1) : q).trim().toLowerCase();
+          for(const item of KEY_BINDINGS){
+            const key = item.key.toLowerCase();
+            const desc = item.desc.toLowerCase();
+            let show = false;
+            if(qstr === '') show = true;
+            else if(isKeyOnly) show = key.indexOf(qstr) !== -1;
+            else show = (key + ' ' + desc).indexOf(qstr) !== -1;
+            if(show){
+              const row = document.createElement('div'); row.className = 'help-item';
+              const k = document.createElement('div'); k.className = 'help-key'; k.textContent = item.key;
+              const d = document.createElement('div'); d.className = 'help-desc'; d.textContent = item.desc;
+              row.appendChild(k); row.appendChild(d);
+              list.appendChild(row);
+            }
+          }
+        }
+
+        input.addEventListener('input', ()=> renderList(input.value));
+        input.addEventListener('keydown', (ev)=>{
+          if(ev.key === 'Escape') { hideHelp(); ev.preventDefault(); }
+        });
+
+        helpOverlay.addEventListener('click', (ev)=>{
+          if(ev.target === helpOverlay) hideHelp();
+        });
+
+        function showHelp(){
+          ensureHelp();
+          helpOverlay.style.display = 'flex';
+          const inp = helpOverlay.querySelector('.help-input');
+          inp.value = '';
+          helpOverlay.querySelector('.help-list').innerHTML = '';
+          setTimeout(()=>{ inp.focus(); renderList(''); }, 10);
+        }
+        function hideHelp(){ helpOverlay.style.display = 'none'; document.activeElement && document.activeElement.blur(); }
+
+        // expose
+        window.showHelp = showHelp;
+        window.hideHelp = hideHelp;
+        renderList('');
+        return helpOverlay;
+      }
+
+      // Key handling
       document.addEventListener('keydown', (e)=>{
         const active = document.activeElement;
-        const isEditing = active && active.getAttribute && active.getAttribute('contenteditable') === 'true';
+        const isEditing = active && ((active.getAttribute && active.getAttribute('contenteditable') === 'true') || active.tagName === 'TEXTAREA' || active.isContentEditable);
         // allow Ctrl/Cmd+S even while editing
         if((e.ctrlKey || e.metaKey) && e.key.toLowerCase() === 's'){
           e.preventDefault();
           save();
           return;
         }
-        // do not intercept when editing
+
+        // if help overlay open, route to it
+        if(helpOverlay && helpOverlay.style.display === 'flex'){
+          if(e.key === 'Escape'){
+            hideHelp();
+            e.preventDefault();
+          }
+          return; // don't process other global keys while help is open
+        }
+
         if(isEditing) return;
 
         if(e.key === 'a' || e.key === 'o'){
           e.preventDefault();
-          addEvent('');
+          addEvent('', { focus: true });
           return;
+        }
+
+        if(e.key === 'j'){
+          e.preventDefault(); selectNext(); return;
+        }
+        if(e.key === 'k'){
+          e.preventDefault(); selectPrev(); return;
+        }
+
+        if(e.key === 'G'){
+          e.preventDefault(); selectFirst(); return;
+        }
+        if(e.key === 'g'){
+          e.preventDefault(); selectLast(); return;
+        }
+
+        if((e.key === 'i' || e.key === 'Enter') && selectedIndex !== -1){
+          e.preventDefault(); enterInsertOnSelected(); return;
         }
 
         if(e.key === 's' && !e.shiftKey){
@@ -350,6 +559,21 @@
         if(e.key === 'U' || (e.key === 'u' && e.shiftKey)){
           e.preventDefault();
           triggerImport();
+          return;
+        }
+
+        if(e.key === '?'){
+          e.preventDefault();
+          ensureHelp();
+          window.showHelp();
+          return;
+        }
+
+        if(e.key === 'Escape'){
+          // clear selection / exit any mode
+          e.preventDefault();
+          clearSelection();
+          setMode('normal');
           return;
         }
       });
