@@ -67,10 +67,26 @@
     .search-input{width:100%; padding:8px 10px; box-sizing:border-box; background:#000; color:var(--fg); border:1px solid rgba(255,255,255,0.04); outline:none;}
     .search-info{margin-top:8px; color:var(--fg); opacity:0.9; font-size:13px;}
     .search-list{margin-top:8px; max-height:50vh; overflow:auto; border-top:1px solid rgba(255,255,255,0.02);}
+
+    /* Range label */
+    .range-label{position:relative; text-align:center; color:rgba(255,255,255,0.6); font-size:13px; margin-bottom:8px}
+
+    /* Range modal */
+    .range-overlay{position:fixed; inset:0; background:rgba(0,0,0,0.6); display:flex; align-items:center; justify-content:center; z-index:10002}
+    .range-modal{width:480px; max-width:92%; background:#050505; border:1px solid rgba(255,255,255,0.06); padding:12px; box-sizing:border-box;}
+    .range-row{display:flex; gap:8px; margin-top:8px; align-items:center}
+    .range-row label{min-width:80px; color:var(--fg); opacity:0.9}
+    .range-row input, .range-row select{flex:1; padding:8px; background:#000; color:var(--fg); border:1px solid rgba(255,255,255,0.04); box-sizing:border-box;}
+    .range-actions{display:flex; gap:8px; justify-content:flex-end; margin-top:12px}
+    .btn{padding:8px 10px; border:1px solid rgba(255,255,255,0.06); background:transparent; color:var(--fg); cursor:pointer} 
     .search-item{padding:10px 8px; border-bottom:1px solid rgba(255,255,255,0.02); display:flex; flex-direction:column; gap:6px; cursor:pointer;}
     .search-item .title{font-weight:600; color:var(--fg);}
     .search-item .meta{font-size:12px; color:rgba(255,255,255,0.6); opacity:0.9;}
     .search-item.active{background:rgba(255,255,255,0.02);}
+
+    /* Timeline ticks */
+    .tick-label{font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, "Roboto Mono", monospace; font-size:12px; fill:rgba(255,255,255,0.7);}
+    .tick-line{stroke:rgba(255,255,255,0.12); stroke-width:1;}
 
     /* Editable content style */
     .box[contenteditable]{outline:none; caret-color:var(--fg);} 
@@ -119,6 +135,97 @@
         mode = m;
         // subtle transient indicator
         try{ if(typeof showStatus === 'function') showStatus(m.toUpperCase()); }catch(e){}
+      }
+
+      // Timeline range state: { type: 'date'|'time'|'number'|'alpha', min, max }
+      let currentRange = null;
+      function formatRange(range){
+        if(!range) return '';
+        if(range.type === 'date') return `Date: ${range.min} → ${range.max}`;
+        if(range.type === 'time') return `Time: ${range.min} → ${range.max}`;
+        if(range.type === 'number') return `Number: ${range.min} → ${range.max}`;
+        if(range.type === 'alpha') return `Letters: ${range.min} → ${range.max}`;
+        return '';
+      }
+      function updateRangeLabel(){
+        const el = document.getElementById('range-label');
+        if(!el) return;
+        el.textContent = formatRange(currentRange) || '';
+      }
+      function setRange(r){ currentRange = r; updateRangeLabel(); scheduleUpdate(); }
+
+      // Range modal
+      let rangeOverlay;
+      function ensureRange(){
+        if(rangeOverlay) return rangeOverlay;
+        rangeOverlay = document.createElement('div'); rangeOverlay.className = 'range-overlay'; rangeOverlay.style.display = 'none';
+        const modal = document.createElement('div'); modal.className = 'range-modal';
+
+        modal.innerHTML = `
+          <div style="font-weight:700">Set timeline range</div>
+          <div class="range-row"><label>Type</label><select class="range-type"><option value="date">Date</option><option value="time">Time</option><option value="number">Number</option><option value="alpha">Letters</option></select></div>
+          <div class="range-row"><label>Min</label><input class="range-min" placeholder="min"/></div>
+          <div class="range-row"><label>Max</label><input class="range-max" placeholder="max"/></div>
+          <div class="range-actions"><button class="btn btn-cancel">Cancel</button><button class="btn btn-save">Save</button></div>
+        `;
+
+        rangeOverlay.appendChild(modal); document.body.appendChild(rangeOverlay);
+        const typeSel = modal.querySelector('.range-type');
+        const minInput = modal.querySelector('.range-min');
+        const maxInput = modal.querySelector('.range-max');
+        const btnSave = modal.querySelector('.btn-save');
+        const btnCancel = modal.querySelector('.btn-cancel');
+
+        function validateAndSave(){
+          const type = typeSel.value;
+          const min = minInput.value.trim();
+          const max = maxInput.value.trim();
+          if(!min || !max){ showStatus('Min and Max required'); return; }
+          // validation
+          if(type === 'number'){
+            const n1 = parseFloat(min), n2 = parseFloat(max);
+            if(Number.isNaN(n1) || Number.isNaN(n2)){ showStatus('Invalid number'); return; }
+            if(n1 > n2){ showStatus('Min > Max'); return; }
+            setRange({type:'number', min:n1, max:n2});
+          } else if(type === 'date'){
+            const d1 = new Date(min), d2 = new Date(max);
+            if(Number.isNaN(d1.getTime()) || Number.isNaN(d2.getTime())){ showStatus('Invalid date (use YYYY-MM-DD)'); return; }
+            if(d1.getTime() > d2.getTime()){ showStatus('Min > Max'); return; }
+            setRange({type:'date', min:min, max:max});
+          } else if(type === 'time'){
+            // simple hh:mm[:ss] validation
+            const timeRe = /^\d{1,2}:\d{2}(:\d{2})?$/;
+            if(!timeRe.test(min) || !timeRe.test(max)){ showStatus('Invalid time (HH:MM or HH:MM:SS)'); return; }
+            setRange({type:'time', min:min, max:max});
+          } else if(type === 'alpha'){
+            const a = min.toLowerCase(), b = max.toLowerCase();
+            if(!/^[a-z]+$/.test(a) || !/^[a-z]+$/.test(b)){ showStatus('Letters only'); return; }
+            if(a > b){ showStatus('Min > Max'); return; }
+            setRange({type:'alpha', min:a, max:b});
+          }
+          hideRange();
+          showStatus('Range set');
+        }
+
+        function showRange(){ ensureRange(); rangeOverlay.style.display = 'flex'; // populate with currentRange
+          const r = currentRange || {type:'date', min:'', max:''};
+          typeSel.value = r.type || 'date';
+          minInput.value = r.min || '';
+          maxInput.value = r.max || '';
+          setTimeout(()=>{ try{ minInput.focus(); minInput.select(); }catch(e){} }, 10);
+        }
+        function hideRange(){ rangeOverlay.style.display = 'none'; }
+
+        btnSave.addEventListener('click', validateAndSave);
+        btnCancel.addEventListener('click', ()=>{ hideRange(); });
+
+        // keyboard shortcuts inside modal
+        rangeOverlay.addEventListener('keydown', (e)=>{
+          if(e.key === 'Escape'){ hideRange(); e.preventDefault(); }
+          if(e.key === 'Enter'){ validateAndSave(); e.preventDefault(); }
+        });
+
+        window.showRange = showRange; window.hideRange = hideRange; return rangeOverlay;
       }
 
       function createEvent(titleText, opts = {}){
@@ -253,8 +360,11 @@
         svg.setAttribute('width', rect.width);
         svg.setAttribute('height', rect.height);
         svg.setAttribute('viewBox', `0 0 ${rect.width} ${rect.height}`);
-        // clear previous lines
+        // clear previous items
         while(svg.firstChild) svg.removeChild(svg.firstChild);
+
+        // render ticks first (if any)
+        if(currentRange){ renderTicks(svg, rect); }
 
         for(const evt of eventsEl.children){
           const point = evt.querySelector('.point');
@@ -280,6 +390,68 @@
           svg.appendChild(line);
         }
       }
+
+      // Tick helpers: generate ticks and render labels on the timeline SVG
+      function renderTicks(svg, rect){
+        const pad = 24; // padding so ticks aren't flush to edge
+        const h = Math.max(24, rect.height - pad * 2);
+        const tx = rect.width / 2;
+        const ticks = generateTicksForRange(currentRange, 6);
+        for(const it of ticks){
+          const y = pad + it.norm * h;
+          // small horizontal tick centered at timeline x
+          const lx = tx - 6; const rx = tx + 6;
+          const seg = document.createElementNS('http://www.w3.org/2000/svg','line');
+          seg.setAttribute('x1', lx); seg.setAttribute('y1', y); seg.setAttribute('x2', rx); seg.setAttribute('y2', y); seg.setAttribute('class','tick-line');
+          svg.appendChild(seg);
+          const txt = document.createElementNS('http://www.w3.org/2000/svg','text');
+          txt.setAttribute('x', rx + 8); txt.setAttribute('y', y + 4); txt.setAttribute('class','tick-label'); txt.textContent = it.label;
+          svg.appendChild(txt);
+        }
+      }
+
+      function generateTicksForRange(range, target){
+        if(!range) return [];
+        if(range.type === 'number') return numberTicks(range.min, range.max, target);
+        if(range.type === 'time') return timeTicks(range.min, range.max, target);
+        if(range.type === 'date') return dateTicks(range.min, range.max, target);
+        if(range.type === 'alpha') return alphaTicks(range.min, range.max, target);
+        return [];
+      }
+
+      function numberTicks(min, max, target){
+        const out = [];
+        const mn = Number(min); const mx = Number(max); if(isNaN(mn)||isNaN(mx) || mx < mn) return out;
+        const span = mx - mn; if(span === 0){ out.push({value:mn, label: formatNumber(mn), norm:0}); return out; }
+        const rawStep = span / target; const mag = Math.pow(10, Math.floor(Math.log10(rawStep)));
+        const candidates = [1,2,5,10];
+        let step = candidates.map(c=>c*mag).find(s=>s>=rawStep) || candidates[candidates.length-1]*mag;
+        const first = Math.ceil(mn/step)*step;
+        for(let v=first; v<=mx+1e-9; v+=step){
+          const norm = (v - mn) / span;
+          out.push({value:v, label:formatNumber(v), norm:Math.max(0, Math.min(1, norm))});
+          if(out.length > 100) break;
+        }
+        return out;
+      }
+
+      function formatNumber(n){
+        if(Math.abs(n - Math.round(n)) < 1e-9) return String(Math.round(n));
+        return String(Number(n.toFixed(2)));
+      }
+
+      function parseTimeToSeconds(s){ const parts = String(s).split(':').map(Number); if(parts.length<2) return NaN; const h = parts[0], m = parts[1], sec = parts[2]||0; return h*3600 + m*60 + sec; }
+      function formatSeconds(sec){ const h = Math.floor(sec/3600); const m = Math.floor((sec%3600)/60); const s = Math.floor(sec%60); if(s) return `${String(h).padStart(2,'0')}:${String(m).padStart(2,'0')}:${String(s).padStart(2,'0')}`; return `${String(h).padStart(2,'0')}:${String(m).padStart(2,'0')}`; }
+      function timeTicks(min, max, target){ const out=[]; const mn=parseTimeToSeconds(min); const mx=parseTimeToSeconds(max); if(isNaN(mn)||isNaN(mx)||mx<mn) return out; const span=mx-mn; if(span===0){ out.push({value:mn,label:formatSeconds(mn),norm:0}); return out; } const ticks = numberTicks(mn,mx,target); return ticks.map(t=>({value:t.value,label:formatSeconds(t.value),norm:t.norm})); }
+
+      function parseDate(s){ const d = new Date(s); if(Number.isNaN(d.getTime())) return null; return d; }
+      function addDays(d,n){ const x=new Date(d); x.setDate(x.getDate()+n); return x; }
+      function addMonths(d,n){ const x=new Date(d); x.setMonth(x.getMonth()+n); return x; }
+      function addYears(d,n){ const x=new Date(d); x.setFullYear(x.getFullYear()+n); return x; }
+      function dateTicks(min,max,target){ const out=[]; const d1=parseDate(min), d2=parseDate(max); if(!d1||!d2||d2<d1) return out; const spanDays = Math.round((d2 - d1)/86400000); if(spanDays <= 31){ const step = Math.max(1, Math.ceil(spanDays/target)); for(let i=0;i<=spanDays;i+=step){ const dt = addDays(d1,i); const norm = (dt - d1)/(d2 - d1); out.push({value:dt.toISOString().slice(0,10), label:dt.toISOString().slice(0,10), norm:Math.max(0,Math.min(1,norm))}); } return out; } if(spanDays <= 365*2){ const m1=d1.getFullYear()*12 + d1.getMonth(); const m2=d2.getFullYear()*12 + d2.getMonth(); const months = m2 - m1; const step = Math.max(1, Math.ceil(months/target)); for(let m = 0; m<=months; m+=step){ const dt = addMonths(d1,m); const norm = (dt - d1)/(d2 - d1); out.push({value:dt.toISOString().slice(0,10), label:`${dt.getFullYear()}-${String(dt.getMonth()+1).padStart(2,'0')}`, norm:Math.max(0,Math.min(1,norm))}); } return out; } const y1=d1.getFullYear(); const y2=d2.getFullYear(); const years = y2 - y1; const stepY = Math.max(1, Math.ceil(years/target)); for(let y=0;y<=years;y+=stepY){ const dt = addYears(new Date(d1.getFullYear(),0,1), y); const norm = (dt - d1)/(d2 - d1); out.push({value:dt.getFullYear(), label:String(dt.getFullYear()), norm:Math.max(0,Math.min(1,norm))}); } return out; }
+
+      function alphaTicks(min,max,target){ const out=[]; if(!min||!max) return out; const a = min.toLowerCase()[0], b = max.toLowerCase()[0]; const ca = a.charCodeAt(0), cb=b.charCodeAt(0); if(ca>cb) return out; const total = cb - ca; const step = Math.max(1, Math.ceil((total)/Math.max(1,target))); for(let c=ca;c<=cb;c+=step){ const ch = String.fromCharCode(c); const norm = (c - ca)/(cb - ca || 1); out.push({value:ch,label:ch,norm:Math.max(0,Math.min(1,norm))}); } return out; }
+
 
       function clearEvents(){
         eventsEl.innerHTML = '';
@@ -311,7 +483,7 @@
 
       // Save / export
       function serializeData(){
-        return JSON.stringify({ version:1, title: currentTitle, events: getEventsData() }, null, 2);
+        return JSON.stringify({ version:1, title: currentTitle, range: currentRange, events: getEventsData() }, null, 2);
       }
 
       function buildExportHTML(title, dataJSON){
@@ -575,6 +747,7 @@
         {key:'h', desc:'Move selected event left'},
         {key:'l', desc:'Move selected event right'},
         {key:'D', desc:'Delete selected event'},
+        {key:'$', desc:'Set timeline range (min / max)'},
         {key:'i / Enter', desc:'Edit selected event title (INSERT)'},
         {key:'Esc', desc:'Exit to NORMAL mode / stop editing'},
         {key:'s', desc:'Save'},
@@ -720,14 +893,15 @@
           return;
         }
 
-        // if help or search overlay open, route to it
-        if((helpOverlay && helpOverlay.style.display === 'flex') || (searchOverlay && searchOverlay.style.display === 'flex')){
+        // if help, search or range overlay open, route to it
+        if((helpOverlay && helpOverlay.style.display === 'flex') || (searchOverlay && searchOverlay.style.display === 'flex') || (rangeOverlay && rangeOverlay.style.display === 'flex')){
           if(e.key === 'Escape'){
             if(helpOverlay && helpOverlay.style.display === 'flex') hideHelp();
             if(searchOverlay && searchOverlay.style.display === 'flex') hideSearch();
+            if(rangeOverlay && rangeOverlay.style.display === 'flex') hideRange();
             e.preventDefault();
           }
-          return; // don't process other global keys while help or search is open
+          return; // don't process other global keys while help, search or range is open
         }
 
         if(isEditing) return;
@@ -788,6 +962,10 @@
           save();
           return;
         }
+
+        if(e.key === '$'){
+          e.preventDefault(); ensureRange(); showRange(); return;
+        }
         if(e.key === 'S' || (e.key === 's' && e.shiftKey)){
           e.preventDefault();
           saveAs();
@@ -824,6 +1002,7 @@
           const parsed = JSON.parse(el.textContent || el.innerText || '{}');
           if(parsed && Array.isArray(parsed.events)){
             if(parsed.title){ document.title = parsed.title; currentTitle = parsed.title; }
+            if(parsed.range){ setRange(parsed.range); }
             renderFromData(parsed.events);
             return true;
           }
