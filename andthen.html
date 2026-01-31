@@ -417,9 +417,48 @@
         if(eventsEl.children.length === 0) return;
         selectIndex(0);
       }
-      function selectLast(){
-        if(eventsEl.children.length === 0) return;
-        selectIndex(eventsEl.children.length - 1);
+      function deleteSelected(){
+        if(selectedIndex === -1) return;
+        const idx = selectedIndex;
+        const el = eventsEl.children[idx];
+        if(!el) return;
+        el.remove();
+        count = eventsEl.children.length;
+        // prefer selecting the next item at same index, or previous if at end
+        if(eventsEl.children.length === 0){
+          clearSelection();
+          setMode('normal');
+          showStatus('Deleted — no events');
+          return;
+        }
+        const newIdx = Math.min(idx, eventsEl.children.length - 1);
+        selectIndex(newIdx);
+        showStatus('Deleted');
+      }
+
+      function moveSelectedUp(){
+        if(selectedIndex <= 0) return;
+        const idx = selectedIndex;
+        const node = eventsEl.children[idx];
+        const prev = eventsEl.children[idx - 1];
+        if(!node || !prev) return;
+        // insert node before prev to move it up one
+        eventsEl.insertBefore(node, prev);
+        // update selection
+        selectIndex(idx - 1);
+        showStatus('Moved up');
+      }
+
+      function moveSelectedDown(){
+        if(selectedIndex === -1 || selectedIndex >= eventsEl.children.length - 1) return;
+        const idx = selectedIndex;
+        const node = eventsEl.children[idx];
+        const next = eventsEl.children[idx + 1];
+        if(!node || !next) return;
+        // insert node after next
+        eventsEl.insertBefore(node, next.nextSibling);
+        selectIndex(idx + 1);
+        showStatus('Moved down');
       }
 
       function selectNext(){
@@ -451,6 +490,9 @@
         {key:'g', desc:'Select last event'},
         {key:'G', desc:'Select first event'},
         {key:'/ ', desc:'Search events (prefix ":" to search titles only)'},
+        {key:'J', desc:'Move selected event down'},
+        {key:'K', desc:'Move selected event up'},
+        {key:'D', desc:'Delete selected event'},
         {key:'i / Enter', desc:'Edit selected event title (INSERT)'},
         {key:'Esc', desc:'Exit to NORMAL mode / stop editing'},
         {key:'s', desc:'Save'},
@@ -570,8 +612,8 @@
 
         input.addEventListener('input', ()=> render(input.value));
         input.addEventListener('keydown', (ev)=>{
-          if(ev.key === 'Escape'){ hideSearch(); ev.preventDefault(); }
-          if(ev.key === 'Enter'){ if(matchIndices.length){ selectIndex(matchIndices[matchPointer]); hideSearch(); } ev.preventDefault(); }
+          if(ev.key === 'Escape'){ hideSearch(true); ev.preventDefault(); }
+          if(ev.key === 'Enter'){ if(matchIndices.length){ selectIndex(matchIndices[matchPointer]); hideSearch(false); } ev.preventDefault(); }
           if(ev.key === 'ArrowDown'){ if(matchIndices.length){ matchPointer = Math.min(matchPointer+1, matchIndices.length-1); selectIndex(matchIndices[matchPointer]); } ev.preventDefault(); }
           if(ev.key === 'ArrowUp'){ if(matchIndices.length){ matchPointer = Math.max(matchPointer-1, 0); selectIndex(matchIndices[matchPointer]); } ev.preventDefault(); }
         });
@@ -579,7 +621,7 @@
         searchOverlay.addEventListener('click', (ev)=>{ if(ev.target === searchOverlay) hideSearch(); });
 
         function showSearch(){ ensureSearch(); preSearchSelected = selectedIndex; searchOverlay.style.display = 'flex'; const inp = searchOverlay.querySelector('.search-input'); inp.value = ''; setTimeout(()=>{ inp.focus(); render(''); }, 10); }
-        function hideSearch(){ searchOverlay.style.display = 'none'; for(const e of eventsEl.children) e.classList.remove('hidden'); if(preSearchSelected !== -1) selectIndex(preSearchSelected); else clearSelection(); }
+        function hideSearch(restorePrevious = true){ searchOverlay.style.display = 'none'; for(const e of eventsEl.children) e.classList.remove('hidden'); if(restorePrevious){ if(preSearchSelected !== -1) selectIndex(preSearchSelected); else clearSelection(); } }
 
         window.showSearch = showSearch; window.hideSearch = hideSearch;
         return searchOverlay;
@@ -630,6 +672,13 @@
           e.preventDefault(); selectPrev(); return;
         }
 
+        if(e.key === 'J'){
+          e.preventDefault(); moveSelectedDown(); return;
+        }
+        if(e.key === 'K'){
+          e.preventDefault(); moveSelectedUp(); return;
+        }
+
         if(e.key === 'G'){
           e.preventDefault(); selectFirst(); return;
         }
@@ -639,6 +688,10 @@
 
         if((e.key === 'i' || e.key === 'Enter') && selectedIndex !== -1){
           e.preventDefault(); enterInsertOnSelected(); return;
+        }
+
+        if(e.key === 'D'){
+          e.preventDefault(); deleteSelected(); return;
         }
 
         if(e.key === 's' && !e.shiftKey){
