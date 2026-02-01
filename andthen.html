@@ -1,0 +1,1028 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width,initial-scale=1" />
+  <title>AndThen — Vertical Timeline Editor</title>
+  <style>
+    :root{
+      --bg: #000;
+      --fg: #fff;
+      --line: #fff;
+      --border: rgba(255,255,255,0.06); /* barely visible gray border */
+    }
+    html,body{height:100%; margin:0; background:var(--bg); color:var(--fg); font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, "Roboto Mono", monospace;}
+
+    /* Editor container */
+    #editor{height:100vh; overflow:auto; box-sizing:border-box;}
+
+    /* Centered timeline column */
+    .timeline{position:relative; width:100%; max-width:900px; margin:0 auto; padding:48px 20px; box-sizing:border-box; min-height:calc(100vh - 96px);} 
+
+    /* The vertical white line (1px) — it fills the timeline height (extends as events are added) */
+    .timeline .line{position:absolute; left:50%; top:0; bottom:0; width:1px; background:var(--line); transform:translateX(-50%);} 
+
+    /* Stacks events vertically. Its height grows with content; the .line matches it. */
+    .events{position:relative; display:flex; flex-direction:column; gap:28px;}
+
+    /* Each event occupies the full width but its content is boxed left or right of the center line */
+    .event{position:relative; display:flex; width:100%; align-items:flex-start;}
+
+    /* Event content (title + details) */
+    .content{max-width:46%; box-sizing:border-box; border:1px solid var(--border); padding:10px; background:transparent;}
+    .title{padding:4px 6px; color:var(--fg); background:transparent; border-radius:0; font-weight:600;}
+    .title[contenteditable]{outline:none; caret-color:var(--fg);}
+    .details{display:block; width:100%; margin-top:8px; background:transparent; color:var(--fg); border:0; padding:6px 6px; box-sizing:border-box; font-family:inherit; font-size:13px; min-height:64px; resize:vertical; overflow:hidden; max-height:60vh;}
+    /* Left and right alignment relative to the center line */
+    .event.left{justify-content:flex-start;}        /* box to the left side (visual) */
+    .event.right{justify-content:flex-end;}      /* box to the right side (visual) */
+    .event.left .content{ text-align:left; }
+    .event.right .content{ text-align:right; }
+
+    /* Small connector marker at the center line for each event (white) */
+    .point{position:absolute; left:50%; transform:translate(-50%, -50%); width:10px; height:10px; border:1px solid var(--line); background:var(--line); box-sizing:border-box; z-index:3}
+
+    /* SVG connectors (line from marker to event border) */
+    svg.connectors{position:absolute; left:0; top:0; width:100%; height:100%; pointer-events:none; z-index:1}
+    .events{position:relative; display:flex; flex-direction:column; gap:28px; z-index:2}
+
+    /* Selected event in NORMAL mode */
+    .event.selected .content{border-color:var(--line); box-shadow:0 0 0 1px rgba(255,255,255,0.03);}
+
+    /* Help modal */
+    .help-overlay{position:fixed; inset:0; background:rgba(0,0,0,0.6); display:flex; align-items:center; justify-content:center; z-index:10000;}
+    .help-modal{width:640px; max-width:92%; max-height:80vh; background:#050505; border:1px solid rgba(255,255,255,0.06); padding:12px; box-sizing:border-box; overflow:hidden;}
+    .help-input{width:100%; padding:8px 10px; box-sizing:border-box; background:#000; color:var(--fg); border:1px solid rgba(255,255,255,0.04); outline:none;}
+    .help-list{margin-top:8px; overflow:auto; max-height:60vh;}
+    .help-item{display:flex; gap:12px; padding:8px 6px; border-bottom:1px solid rgba(255,255,255,0.02);}
+    .help-key{min-width:90px; color:var(--line); font-weight:700;}
+    .help-desc{color:var(--fg); opacity:0.9;}
+
+    /* Hidden events (filtered out by search) */
+    .event.hidden{display:none;}
+
+    /* Search modal */
+    .search-overlay{position:fixed; inset:0; background:rgba(0,0,0,0.45); display:flex; align-items:flex-start; justify-content:center; z-index:10001; padding-top:80px;}
+    .search-box{width:640px; max-width:92%; background:#050505; border:1px solid rgba(255,255,255,0.06); padding:8px; box-sizing:border-box;}
+    .search-input{width:100%; padding:8px 10px; box-sizing:border-box; background:#000; color:var(--fg); border:1px solid rgba(255,255,255,0.04); outline:none;}
+    .search-info{margin-top:8px; color:var(--fg); opacity:0.9; font-size:13px;}
+    .search-list{margin-top:8px; max-height:50vh; overflow:auto; border-top:1px solid rgba(255,255,255,0.02);}
+
+    /* Range label */
+    .range-label{position:relative; text-align:center; color:rgba(255,255,255,0.6); font-size:13px; margin-bottom:8px}
+
+    /* Range modal */
+    .range-overlay{position:fixed; inset:0; background:rgba(0,0,0,0.6); display:flex; align-items:center; justify-content:center; z-index:10002}
+    .range-modal{width:480px; max-width:92%; background:#050505; border:1px solid rgba(255,255,255,0.06); padding:12px; box-sizing:border-box;}
+    .range-row{display:flex; gap:8px; margin-top:8px; align-items:center}
+    .range-row label{min-width:80px; color:var(--fg); opacity:0.9}
+    .range-row input, .range-row select{flex:1; padding:8px; background:#000; color:var(--fg); border:1px solid rgba(255,255,255,0.04); box-sizing:border-box;}
+    .range-actions{display:flex; gap:8px; justify-content:flex-end; margin-top:12px}
+    .btn{padding:8px 10px; border:1px solid rgba(255,255,255,0.06); background:transparent; color:var(--fg); cursor:pointer} 
+    .search-item{padding:10px 8px; border-bottom:1px solid rgba(255,255,255,0.02); display:flex; flex-direction:column; gap:6px; cursor:pointer;}
+    .search-item .title{font-weight:600; color:var(--fg);}
+    .search-item .meta{font-size:12px; color:rgba(255,255,255,0.6); opacity:0.9;}
+    .search-item.active{background:rgba(255,255,255,0.02);}
+
+    /* Timeline ticks */
+    .tick-label{font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, "Roboto Mono", monospace; font-size:12px; fill:rgba(255,255,255,0.7);}
+    .tick-line{stroke:rgba(255,255,255,0.12); stroke-width:1;}
+
+    /* Editable content style */
+    .box[contenteditable]{outline:none; caret-color:var(--fg);} 
+
+    /* Make sure text selection looks ok on black */
+    ::selection{background:#444; color:var(--fg);} 
+
+    /* Remove default focus ring while keeping accessibility via keyboard */
+    .box:focus{box-shadow:0 0 0 1px rgba(255,255,255,0.06);}
+
+    /* Minimal responsive tweaks */
+    @media (max-width:640px){
+      .box{max-width:72%;}
+    }
+  </style>
+</head>
+<body>
+  <div id="editor">
+    <div class="timeline">
+      <div class="line" aria-hidden="true"></div>      <svg class="connectors" aria-hidden="true"></svg>      <div class="events" id="events"></div>
+    </div>
+  </div>
+
+  <script>
+    // Timeline Editor (with save/load)
+    // - Data embedded as JSON in a <script id="andthen-data" type="application/json"> block
+    // - 's' = save (silent), 'S' = save as (prompt for filename + title), Ctrl/Cmd+S = save
+
+    (function(){
+      const eventsEl = document.getElementById('events');
+      let count = 0;
+
+      // Track current filename/title (try to derive from location)
+      let currentFilename = (function(){
+        try{
+          const path = decodeURIComponent(location.pathname || '');
+          const last = path.split('/').pop();
+          return last || 'andthen.html';
+        }catch(e){ return 'andthen.html'; }
+      })();
+      let currentTitle = document.title || 'AndThen';
+
+      // Editor mode: 'normal' or 'insert' — start in NORMAL mode (no selection)
+      let mode = 'normal';
+      function setMode(m){
+        mode = m;
+        // subtle transient indicator
+        try{ if(typeof showStatus === 'function') showStatus(m.toUpperCase()); }catch(e){}
+      }
+
+      // Timeline range state: { type: 'date'|'time'|'number'|'alpha', min, max }
+      let currentRange = null;
+      function formatRange(range){
+        if(!range) return '';
+        if(range.type === 'date') return `Date: ${range.min} → ${range.max}`;
+        if(range.type === 'time') return `Time: ${range.min} → ${range.max}`;
+        if(range.type === 'number') return `Number: ${range.min} → ${range.max}`;
+        if(range.type === 'alpha') return `Letters: ${range.min} → ${range.max}`;
+        return '';
+      }
+      function updateRangeLabel(){
+        const el = document.getElementById('range-label');
+        if(!el) return;
+        el.textContent = formatRange(currentRange) || '';
+      }
+      function setRange(r){ currentRange = r; updateRangeLabel(); scheduleUpdate(); }
+
+      // Range modal
+      let rangeOverlay;
+      function ensureRange(){
+        if(rangeOverlay) return rangeOverlay;
+        rangeOverlay = document.createElement('div'); rangeOverlay.className = 'range-overlay'; rangeOverlay.style.display = 'none';
+        const modal = document.createElement('div'); modal.className = 'range-modal';
+
+        modal.innerHTML = `
+          <div style="font-weight:700">Set timeline range</div>
+          <div class="range-row"><label>Type</label><select class="range-type"><option value="date">Date</option><option value="time">Time</option><option value="number">Number</option><option value="alpha">Letters</option></select></div>
+          <div class="range-row"><label>Min</label><input class="range-min" placeholder="min"/></div>
+          <div class="range-row"><label>Max</label><input class="range-max" placeholder="max"/></div>
+          <div class="range-actions"><button class="btn btn-cancel">Cancel</button><button class="btn btn-save">Save</button></div>
+        `;
+
+        rangeOverlay.appendChild(modal); document.body.appendChild(rangeOverlay);
+        const typeSel = modal.querySelector('.range-type');
+        const minInput = modal.querySelector('.range-min');
+        const maxInput = modal.querySelector('.range-max');
+        const btnSave = modal.querySelector('.btn-save');
+        const btnCancel = modal.querySelector('.btn-cancel');
+
+        function validateAndSave(){
+          const type = typeSel.value;
+          const min = minInput.value.trim();
+          const max = maxInput.value.trim();
+          if(!min || !max){ showStatus('Min and Max required'); return; }
+          // validation
+          if(type === 'number'){
+            const n1 = parseFloat(min), n2 = parseFloat(max);
+            if(Number.isNaN(n1) || Number.isNaN(n2)){ showStatus('Invalid number'); return; }
+            if(n1 > n2){ showStatus('Min > Max'); return; }
+            setRange({type:'number', min:n1, max:n2});
+          } else if(type === 'date'){
+            const d1 = new Date(min), d2 = new Date(max);
+            if(Number.isNaN(d1.getTime()) || Number.isNaN(d2.getTime())){ showStatus('Invalid date (use YYYY-MM-DD)'); return; }
+            if(d1.getTime() > d2.getTime()){ showStatus('Min > Max'); return; }
+            setRange({type:'date', min:min, max:max});
+          } else if(type === 'time'){
+            // simple hh:mm[:ss] validation
+            const timeRe = /^\d{1,2}:\d{2}(:\d{2})?$/;
+            if(!timeRe.test(min) || !timeRe.test(max)){ showStatus('Invalid time (HH:MM or HH:MM:SS)'); return; }
+            setRange({type:'time', min:min, max:max});
+          } else if(type === 'alpha'){
+            const a = min.toLowerCase(), b = max.toLowerCase();
+            if(!/^[a-z]+$/.test(a) || !/^[a-z]+$/.test(b)){ showStatus('Letters only'); return; }
+            if(a > b){ showStatus('Min > Max'); return; }
+            setRange({type:'alpha', min:a, max:b});
+          }
+          hideRange();
+          showStatus('Range set');
+        }
+
+        function showRange(){ ensureRange(); rangeOverlay.style.display = 'flex'; // populate with currentRange
+          const r = currentRange || {type:'date', min:'', max:''};
+          typeSel.value = r.type || 'date';
+          minInput.value = r.min || '';
+          maxInput.value = r.max || '';
+          setTimeout(()=>{ try{ minInput.focus(); minInput.select(); }catch(e){} }, 10);
+        }
+        function hideRange(){ rangeOverlay.style.display = 'none'; }
+
+        btnSave.addEventListener('click', validateAndSave);
+        btnCancel.addEventListener('click', ()=>{ hideRange(); });
+
+        // keyboard shortcuts inside modal
+        rangeOverlay.addEventListener('keydown', (e)=>{
+          if(e.key === 'Escape'){ hideRange(); e.preventDefault(); }
+          if(e.key === 'Enter'){ validateAndSave(); e.preventDefault(); }
+        });
+
+        window.showRange = showRange; window.hideRange = hideRange; return rangeOverlay;
+      }
+
+      function createEvent(titleText, opts = {}){
+        // opts.insertAt: optional numeric index to insert the event BEFORE that index
+        const insertAt = (typeof opts.insertAt === 'number') ? Math.max(0, Math.min(opts.insertAt, eventsEl.children.length)) : eventsEl.children.length;
+        const side = opts.side || ((insertAt % 2 === 0) ? 'left' : 'right');
+        const evt = document.createElement('div');
+        evt.className = 'event ' + side;
+
+        const point = document.createElement('div');
+        point.className = 'point';
+
+        const content = document.createElement('div');
+        content.className = 'content';
+
+        const title = document.createElement('div');
+        title.className = 'title';
+        title.setAttribute('contenteditable', 'true');
+        title.innerText = titleText || '';
+
+        const details = document.createElement('textarea');
+        details.className = 'details';
+        details.value = opts.details || '';
+        // size to content
+        autosizeTextarea(details);
+        details.addEventListener('input', ()=> autosizeTextarea(details));
+
+        // Enter in title creates a new event (like before)
+        title.addEventListener('keydown', (e)=>{
+          if(e.key === 'Enter'){
+            e.preventDefault();
+            title.blur();
+            // create after this event
+            const idx = Array.prototype.indexOf.call(eventsEl.children, evt);
+            addEvent('', { focus: true, insertAt: idx + 1 });
+          } else if(e.key === 'Escape'){
+            title.blur();
+          }
+        });
+        // schedule connector updates while typing in title
+        title.addEventListener('input', ()=> scheduleUpdate());
+
+        // Escape in details exits insert mode
+        details.addEventListener('keydown', (e)=>{
+          if(e.key === 'Escape'){
+            details.blur();
+          }
+        });
+
+        // when editing stops, go back to normal mode
+        title.addEventListener('blur', ()=>{ setMode('normal'); });
+        details.addEventListener('blur', ()=>{ setMode('normal'); });
+
+        content.appendChild(title);
+        content.appendChild(details);
+
+        evt.appendChild(point);
+        evt.appendChild(content);
+
+        // insert at the correct position
+        if(insertAt >= eventsEl.children.length) eventsEl.appendChild(evt);
+        else eventsEl.insertBefore(evt, eventsEl.children[insertAt]);
+
+        // keep internal count consistent
+        count = eventsEl.children.length;
+
+        title.scrollIntoView({behavior:'smooth', block:'center'});
+        scheduleUpdate();
+
+        // Focus and select only if opts.focus is not explicitly false
+        if(opts.focus !== false){
+          // select the new event in NORMAL mode then focus
+          const newIndex = Array.prototype.indexOf.call(eventsEl.children, evt);
+          selectIndex(newIndex);
+          requestAnimationFrame(()=>{
+            title.focus();
+            setMode('insert');
+            try{
+              const sel = window.getSelection();
+              const range = document.createRange();
+              range.selectNodeContents(title);
+              if(title.innerText && title.innerText.length){
+                sel.removeAllRanges();
+                sel.addRange(range);
+              } else {
+                range.collapse(true); // caret at start
+                sel.removeAllRanges();
+                sel.addRange(range);
+              }
+            }catch(e){ /* ignore selection errors */ }
+          });
+        }
+
+        return evt;
+      }
+
+      function getEventsData(){
+        const out = [];
+        for(const evt of eventsEl.children){
+          const title = evt.querySelector('.title');
+          const details = evt.querySelector('.details');
+          out.push({ title: title ? title.innerText : '', details: details ? details.value : '', side: evt.classList.contains('left') ? 'left' : 'right' });
+        }
+        return out;
+      }
+
+      function autosizeTextarea(el){
+        try{
+          if(!el) return;
+          el.style.height = 'auto';
+          const max = Math.max(160, Math.min(window.innerHeight * 0.6, 800));
+          const h = Math.min(el.scrollHeight, max);
+          el.style.height = h + 'px';
+          scheduleUpdate();
+        }catch(e){/* ignore */}
+      }
+
+      // Connectors: draw SVG lines from the center of the marker to the nearest border center of its event
+      let _updateScheduled = false;
+      function scheduleUpdate(){
+        if(_updateScheduled) return;
+        _updateScheduled = true;
+        requestAnimationFrame(()=>{ _updateScheduled = false; updateConnectors(); });
+      }
+
+      function updateConnectors(){
+        const svg = document.querySelector('.timeline svg.connectors');
+        const timeline = document.querySelector('.timeline');
+        if(!svg || !timeline) return;
+        // size svg to timeline
+        const rect = timeline.getBoundingClientRect();
+        svg.setAttribute('width', rect.width);
+        svg.setAttribute('height', rect.height);
+        svg.setAttribute('viewBox', `0 0 ${rect.width} ${rect.height}`);
+        // clear previous items
+        while(svg.firstChild) svg.removeChild(svg.firstChild);
+
+        // render ticks first (if any)
+        if(currentRange){ renderTicks(svg, rect); }
+
+        for(const evt of eventsEl.children){
+          const point = evt.querySelector('.point');
+          const content = evt.querySelector('.content');
+          if(!point || !content) continue;
+          const pr = point.getBoundingClientRect();
+          const cr = content.getBoundingClientRect();
+          const px = pr.left - rect.left + pr.width/2;
+          const py = pr.top - rect.top + pr.height/2;
+          // choose border X based on event side: left events connect to their right edge, right events connect to their left edge
+          const side = evt.classList.contains('left') ? 'left' : 'right';
+          const bx = side === 'left' ? (cr.right - rect.left) : (cr.left - rect.left);
+          const by = cr.top - rect.top + cr.height/2;
+
+          const line = document.createElementNS('http://www.w3.org/2000/svg','line');
+          line.setAttribute('x1', px);
+          line.setAttribute('y1', py);
+          line.setAttribute('x2', bx);
+          line.setAttribute('y2', by);
+          line.setAttribute('stroke', 'rgba(255,255,255,0.14)');
+          line.setAttribute('stroke-width', '1');
+          line.setAttribute('stroke-linecap', 'butt');
+          svg.appendChild(line);
+        }
+      }
+
+      // Tick helpers: generate ticks and render labels on the timeline SVG
+      function renderTicks(svg, rect){
+        const pad = 24; // padding so ticks aren't flush to edge
+        const h = Math.max(24, rect.height - pad * 2);
+        const tx = rect.width / 2;
+        const ticks = generateTicksForRange(currentRange, 6);
+        for(const it of ticks){
+          const y = pad + it.norm * h;
+          // small horizontal tick centered at timeline x
+          const lx = tx - 6; const rx = tx + 6;
+          const seg = document.createElementNS('http://www.w3.org/2000/svg','line');
+          seg.setAttribute('x1', lx); seg.setAttribute('y1', y); seg.setAttribute('x2', rx); seg.setAttribute('y2', y); seg.setAttribute('class','tick-line');
+          svg.appendChild(seg);
+          const txt = document.createElementNS('http://www.w3.org/2000/svg','text');
+          txt.setAttribute('x', rx + 8); txt.setAttribute('y', y + 4); txt.setAttribute('class','tick-label'); txt.textContent = it.label;
+          svg.appendChild(txt);
+        }
+      }
+
+      function generateTicksForRange(range, target){
+        if(!range) return [];
+        if(range.type === 'number') return numberTicks(range.min, range.max, target);
+        if(range.type === 'time') return timeTicks(range.min, range.max, target);
+        if(range.type === 'date') return dateTicks(range.min, range.max, target);
+        if(range.type === 'alpha') return alphaTicks(range.min, range.max, target);
+        return [];
+      }
+
+      function numberTicks(min, max, target){
+        const out = [];
+        const mn = Number(min); const mx = Number(max); if(isNaN(mn)||isNaN(mx) || mx < mn) return out;
+        const span = mx - mn; if(span === 0){ out.push({value:mn, label: formatNumber(mn), norm:0}); return out; }
+        const rawStep = span / target; const mag = Math.pow(10, Math.floor(Math.log10(rawStep)));
+        const candidates = [1,2,5,10];
+        let step = candidates.map(c=>c*mag).find(s=>s>=rawStep) || candidates[candidates.length-1]*mag;
+        const first = Math.ceil(mn/step)*step;
+        for(let v=first; v<=mx+1e-9; v+=step){
+          const norm = (v - mn) / span;
+          out.push({value:v, label:formatNumber(v), norm:Math.max(0, Math.min(1, norm))});
+          if(out.length > 100) break;
+        }
+        return out;
+      }
+
+      function formatNumber(n){
+        if(Math.abs(n - Math.round(n)) < 1e-9) return String(Math.round(n));
+        return String(Number(n.toFixed(2)));
+      }
+
+      function parseTimeToSeconds(s){ const parts = String(s).split(':').map(Number); if(parts.length<2) return NaN; const h = parts[0], m = parts[1], sec = parts[2]||0; return h*3600 + m*60 + sec; }
+      function formatSeconds(sec){ const h = Math.floor(sec/3600); const m = Math.floor((sec%3600)/60); const s = Math.floor(sec%60); if(s) return `${String(h).padStart(2,'0')}:${String(m).padStart(2,'0')}:${String(s).padStart(2,'0')}`; return `${String(h).padStart(2,'0')}:${String(m).padStart(2,'0')}`; }
+      function timeTicks(min, max, target){ const out=[]; const mn=parseTimeToSeconds(min); const mx=parseTimeToSeconds(max); if(isNaN(mn)||isNaN(mx)||mx<mn) return out; const span=mx-mn; if(span===0){ out.push({value:mn,label:formatSeconds(mn),norm:0}); return out; } const ticks = numberTicks(mn,mx,target); return ticks.map(t=>({value:t.value,label:formatSeconds(t.value),norm:t.norm})); }
+
+      function parseDate(s){ const d = new Date(s); if(Number.isNaN(d.getTime())) return null; return d; }
+      function addDays(d,n){ const x=new Date(d); x.setDate(x.getDate()+n); return x; }
+      function addMonths(d,n){ const x=new Date(d); x.setMonth(x.getMonth()+n); return x; }
+      function addYears(d,n){ const x=new Date(d); x.setFullYear(x.getFullYear()+n); return x; }
+      function dateTicks(min,max,target){ const out=[]; const d1=parseDate(min), d2=parseDate(max); if(!d1||!d2||d2<d1) return out; const spanDays = Math.round((d2 - d1)/86400000); if(spanDays <= 31){ const step = Math.max(1, Math.ceil(spanDays/target)); for(let i=0;i<=spanDays;i+=step){ const dt = addDays(d1,i); const norm = (dt - d1)/(d2 - d1); out.push({value:dt.toISOString().slice(0,10), label:dt.toISOString().slice(0,10), norm:Math.max(0,Math.min(1,norm))}); } return out; } if(spanDays <= 365*2){ const m1=d1.getFullYear()*12 + d1.getMonth(); const m2=d2.getFullYear()*12 + d2.getMonth(); const months = m2 - m1; const step = Math.max(1, Math.ceil(months/target)); for(let m = 0; m<=months; m+=step){ const dt = addMonths(d1,m); const norm = (dt - d1)/(d2 - d1); out.push({value:dt.toISOString().slice(0,10), label:`${dt.getFullYear()}-${String(dt.getMonth()+1).padStart(2,'0')}`, norm:Math.max(0,Math.min(1,norm))}); } return out; } const y1=d1.getFullYear(); const y2=d2.getFullYear(); const years = y2 - y1; const stepY = Math.max(1, Math.ceil(years/target)); for(let y=0;y<=years;y+=stepY){ const dt = addYears(new Date(d1.getFullYear(),0,1), y); const norm = (dt - d1)/(d2 - d1); out.push({value:dt.getFullYear(), label:String(dt.getFullYear()), norm:Math.max(0,Math.min(1,norm))}); } return out; }
+
+      function alphaTicks(min,max,target){ const out=[]; if(!min||!max) return out; const a = min.toLowerCase()[0], b = max.toLowerCase()[0]; const ca = a.charCodeAt(0), cb=b.charCodeAt(0); if(ca>cb) return out; const total = cb - ca; const step = Math.max(1, Math.ceil((total)/Math.max(1,target))); for(let c=ca;c<=cb;c+=step){ const ch = String.fromCharCode(c); const norm = (c - ca)/(cb - ca || 1); out.push({value:ch,label:ch,norm:Math.max(0,Math.min(1,norm))}); } return out; }
+
+
+      function clearEvents(){
+        eventsEl.innerHTML = '';
+        count = 0;
+        clearSelection();
+      }
+
+      function renderFromData(data){
+        clearEvents();
+        if(!Array.isArray(data)) return;
+        for(const item of data){
+          createEvent(item.title || '', { side: item.side || undefined, details: item.details || '', focus: false });
+        }
+        // update connectors after rendering
+        scheduleUpdate();
+      }
+
+      function addEvent(text, opts = {}){
+        const evt = createEvent(text, opts);
+        if(typeof opts.insertAt === 'number'){
+          // ensure selection ends up at the inserted position
+          const idx = Math.max(0, Math.min(opts.insertAt, eventsEl.children.length - 1));
+          selectIndex(idx);
+        }
+        if(opts.focus !== false){ setMode('insert'); }
+        return evt;
+      }
+      window.addEvent = addEvent;
+
+      // Save / export
+      function serializeData(){
+        return JSON.stringify({ version:1, title: currentTitle, range: currentRange, events: getEventsData() }, null, 2);
+      }
+
+      function buildExportHTML(title, dataJSON){
+        // Clone the document and inject the data script
+        const clone = document.documentElement.cloneNode(true);
+        // update title
+        const titleEl = clone.querySelector('title');
+        if(titleEl) titleEl.textContent = title;
+        // clear existing rendered events in the clone to avoid duplication on load
+        const eventsClone = clone.querySelector('#events');
+        if(eventsClone) eventsClone.innerHTML = '';
+        // find or create data script
+        let dataScript = clone.querySelector('#andthen-data');
+        if(!dataScript){
+          dataScript = clone.ownerDocument.createElement('script');
+          dataScript.setAttribute('id','andthen-data');
+          dataScript.setAttribute('type','application/json');
+          // append before closing body
+          const body = clone.querySelector('body') || clone;
+          body.appendChild(dataScript);
+        }
+        dataScript.textContent = dataJSON;
+
+        const serialized = '<!doctype html>\n' + clone.outerHTML;
+        return serialized;
+      }
+
+      function downloadHTML(filename, html){
+        const blob = new Blob([html], { type: 'text/html' });
+        const url = URL.createObjectURL(blob);
+        const a = document.createElement('a');
+        a.href = url;
+        a.download = filename;
+        document.body.appendChild(a);
+        a.click();
+        a.remove();
+        URL.revokeObjectURL(url);
+        showStatus('Saved ' + filename);
+      }
+
+      function saveAs(){
+        const name = prompt('Save as filename (include .html):', currentFilename);
+        if(!name) return;
+        const filename = name.match(/\.html?$/i) ? name : (name + '.html');
+        const title = prompt('Document title:', currentTitle) || currentTitle;
+        currentFilename = filename;
+        currentTitle = title;
+        const html = buildExportHTML(currentTitle, serializeData());
+        downloadHTML(currentFilename, html);
+      }
+
+      function save(){
+        // blur active editable to ensure content is up to date
+        try{ if(document.activeElement && document.activeElement.blur) document.activeElement.blur(); }catch(e){}
+        const html = buildExportHTML(currentTitle, serializeData());
+        downloadHTML(currentFilename, html);
+      }
+
+      window.saveAndThen = save; // expose for debugging
+      window.saveAsAndThen = saveAs;
+
+      // keep connectors updated on resize/scroll
+      window.addEventListener('resize', scheduleUpdate);
+      const editorEl = document.getElementById('editor');
+      if(editorEl) editorEl.addEventListener('scroll', scheduleUpdate);
+
+      // Minimal status indicator (non-intrusive)
+      let statusEl;
+      function showStatus(msg){
+        if(!statusEl){
+          statusEl = document.createElement('div');
+          statusEl.style.position = 'fixed';
+          statusEl.style.right = '12px';
+          statusEl.style.bottom = '12px';
+          statusEl.style.padding = '6px 10px';
+          statusEl.style.background = 'rgba(255,255,255,0.06)';
+          statusEl.style.border = '1px solid var(--border)';
+          statusEl.style.color = 'var(--fg)';
+          statusEl.style.fontSize = '12px';
+          statusEl.style.zIndex = 9999;
+          document.body.appendChild(statusEl);
+        }
+        statusEl.textContent = msg;
+        statusEl.style.opacity = '1';
+        clearTimeout(statusEl._t);
+        statusEl._t = setTimeout(()=>{ statusEl.style.opacity = '0'; }, 1600);
+      }
+
+      // Import handler (U) — hidden file input
+      let importInput;
+      function ensureImportInput(){
+        if(importInput) return importInput;
+        importInput = document.createElement('input');
+        importInput.type = 'file';
+        importInput.accept = '.html,.htm,text/html';
+        importInput.style.display = 'none';
+        importInput.addEventListener('change', (e)=>{
+          const f = importInput.files && importInput.files[0];
+          if(f) handleImportFile(f);
+          importInput.value = '';
+        });
+        document.body.appendChild(importInput);
+        return importInput;
+      }
+
+      function handleImportFile(file){
+        const reader = new FileReader();
+        reader.onload = function(){
+          const text = reader.result;
+          try{
+            const doc = new DOMParser().parseFromString(text, 'text/html');
+            const dataEl = doc.getElementById('andthen-data');
+            let parsed = null;
+            if(dataEl && dataEl.textContent){
+              parsed = JSON.parse(dataEl.textContent);
+            } else {
+              // fallback: regex search
+              const m = text.match(/<script[^>]*id=["']andthen-data["'][^>]*>([\s\S]*?)<\/script>/i);
+              if(m && m[1]) parsed = JSON.parse(m[1]);
+            }
+            if(parsed && Array.isArray(parsed.events)){
+              currentFilename = file.name || currentFilename;
+              currentTitle = parsed.title || (file.name ? file.name.replace(/\.html?$/i,'') : currentTitle);
+              document.title = currentTitle;
+              renderFromData(parsed.events);
+              window.scrollTo(0,0);
+              showStatus('Imported ' + currentFilename);
+            } else {
+              showStatus('No valid data found in ' + (file.name || 'file'));
+            }
+          }catch(err){
+            console.error('import error', err);
+            showStatus('Failed to import: ' + (file.name || 'file'));
+          }
+        };
+        reader.readAsText(file);
+      }
+
+      function triggerImport(){ ensureImportInput().click(); }
+
+      // Navigation / selection state
+      let selectedIndex = -1;
+      function clearSelection(){
+        selectedIndex = -1;
+        for(const e of eventsEl.children) e.classList.remove('selected');
+      }
+      function selectIndex(i){
+        if(i < 0 || i >= eventsEl.children.length){ return; }
+        clearSelection();
+        selectedIndex = i;
+        const el = eventsEl.children[selectedIndex];
+        el.classList.add('selected');
+        el.scrollIntoView({behavior:'smooth', block:'center'});
+        // connectors may need update after scroll or position change
+        requestAnimationFrame(()=> scheduleUpdate());
+      }
+      function selectFirst(){
+        if(eventsEl.children.length === 0) return;
+        selectIndex(0);
+      }
+      function deleteSelected(){
+        if(selectedIndex === -1) return;
+        const idx = selectedIndex;
+        const el = eventsEl.children[idx];
+        if(!el) return;
+        el.remove();
+        count = eventsEl.children.length;
+        // prefer selecting the next item at same index, or previous if at end
+        if(eventsEl.children.length === 0){
+          clearSelection();
+          setMode('normal');
+          showStatus('Deleted — no events');
+          return;
+        }
+        const newIdx = Math.min(idx, eventsEl.children.length - 1);
+        selectIndex(newIdx);
+        scheduleUpdate();
+        showStatus('Deleted');
+      }
+
+      function moveSelectedUp(){
+        if(selectedIndex <= 0) return;
+        const idx = selectedIndex;
+        const node = eventsEl.children[idx];
+        const prev = eventsEl.children[idx - 1];
+        if(!node || !prev) return;
+        // insert node before prev to move it up one
+        eventsEl.insertBefore(node, prev);
+        // update selection
+        selectIndex(idx - 1);
+        scheduleUpdate();
+        showStatus('Moved up');
+      }
+
+      function moveSelectedDown(){
+        if(selectedIndex === -1 || selectedIndex >= eventsEl.children.length - 1) return;
+        const idx = selectedIndex;
+        const node = eventsEl.children[idx];
+        const next = eventsEl.children[idx + 1];
+        if(!node || !next) return;
+        // insert node after next
+        eventsEl.insertBefore(node, next.nextSibling);
+        selectIndex(idx + 1);
+        scheduleUpdate();
+        showStatus('Moved down');
+      }
+
+      function moveSelectedLeft(){
+        if(selectedIndex === -1) return;
+        const el = eventsEl.children[selectedIndex];
+        if(!el) return;
+        if(el.classList.contains('left')){ showStatus('Already left'); return; }
+        el.classList.remove('right');
+        el.classList.add('left');
+        scheduleUpdate();
+        showStatus('Moved left');
+      }
+
+      function moveSelectedRight(){
+        if(selectedIndex === -1) return;
+        const el = eventsEl.children[selectedIndex];
+        if(!el) return;
+        if(el.classList.contains('right')){ showStatus('Already right'); return; }
+        el.classList.remove('left');
+        el.classList.add('right');
+        scheduleUpdate();
+        showStatus('Moved right');
+      }
+
+      function selectNext(){
+        if(eventsEl.children.length === 0) return;
+        if(selectedIndex === -1) selectIndex(0);
+        else selectIndex(Math.min(eventsEl.children.length - 1, selectedIndex + 1));
+      }
+      function selectPrev(){
+        if(eventsEl.children.length === 0) return;
+        if(selectedIndex === -1) selectIndex(eventsEl.children.length - 1);
+        else selectIndex(Math.max(0, selectedIndex - 1));
+      }
+
+      function enterInsertOnSelected(){
+        if(selectedIndex === -1) return;
+        const el = eventsEl.children[selectedIndex];
+        const title = el.querySelector('.title');
+        if(title){
+          title.focus();
+          setMode('insert');
+          try{ const sel = window.getSelection(); const range = document.createRange(); range.selectNodeContents(title); range.collapse(true); sel.removeAllRanges(); sel.addRange(range);}catch(e){}
+        }
+      }
+
+      const KEY_BINDINGS = [
+        {key:'a / o', desc:'Add event below (INSERT)'},
+        {key:'j', desc:'Move selection down'},
+        {key:'k', desc:'Move selection up'},
+        {key:'g', desc:'Select last event'},
+        {key:'G', desc:'Select first event'},
+        {key:'/ ', desc:'Search events (prefix ":" to search titles only)'},
+        {key:'J', desc:'Move selected event down'},
+        {key:'K', desc:'Move selected event up'},
+        {key:'h', desc:'Move selected event left'},
+        {key:'l', desc:'Move selected event right'},
+        {key:'D', desc:'Delete selected event'},
+        {key:'$', desc:'Set timeline range (min / max)'},
+        {key:'i / Enter', desc:'Edit selected event title (INSERT)'},
+        {key:'Esc', desc:'Exit to NORMAL mode / stop editing'},
+        {key:'s', desc:'Save'},
+        {key:'S', desc:'Save As (prompt)'},
+        {key:'Ctrl/Cmd+S', desc:'Save'},
+        {key:'U', desc:'Import .html file (replace timeline)'},
+        {key:'?', desc:'Show this help (filterable)'}
+      ];
+
+      // create help modal
+      let helpOverlay;
+      function ensureHelp(){
+        if(helpOverlay) return helpOverlay;
+        helpOverlay = document.createElement('div');
+        helpOverlay.className = 'help-overlay';
+        helpOverlay.style.display = 'none';
+
+        const modal = document.createElement('div');
+        modal.className = 'help-modal';
+
+        const input = document.createElement('input');
+        input.className = 'help-input';
+        input.placeholder = "Filter (prefix with ':' to filter keys only)";
+
+        const list = document.createElement('div');
+        list.className = 'help-list';
+
+        modal.appendChild(input);
+        modal.appendChild(list);
+        helpOverlay.appendChild(modal);
+        document.body.appendChild(helpOverlay);
+
+        function renderList(q){
+          list.innerHTML = '';
+          const isKeyOnly = q.startsWith(':');
+          const qstr = (isKeyOnly ? q.slice(1) : q).trim().toLowerCase();
+          for(const item of KEY_BINDINGS){
+            const key = item.key.toLowerCase();
+            const desc = item.desc.toLowerCase();
+            let show = false;
+            if(qstr === '') show = true;
+            else if(isKeyOnly) show = key.indexOf(qstr) !== -1;
+            else show = (key + ' ' + desc).indexOf(qstr) !== -1;
+            if(show){
+              const row = document.createElement('div'); row.className = 'help-item';
+              const k = document.createElement('div'); k.className = 'help-key'; k.textContent = item.key;
+              const d = document.createElement('div'); d.className = 'help-desc'; d.textContent = item.desc;
+              row.appendChild(k); row.appendChild(d);
+              list.appendChild(row);
+            }
+          }
+        }
+
+        input.addEventListener('input', ()=> renderList(input.value));
+        input.addEventListener('keydown', (ev)=>{
+          if(ev.key === 'Escape') { hideHelp(); ev.preventDefault(); }
+        });
+
+        helpOverlay.addEventListener('click', (ev)=>{
+          if(ev.target === helpOverlay) hideHelp();
+        });
+
+        function showHelp(){
+          ensureHelp();
+          helpOverlay.style.display = 'flex';
+          const inp = helpOverlay.querySelector('.help-input');
+          inp.value = '';
+          helpOverlay.querySelector('.help-list').innerHTML = '';
+          setTimeout(()=>{ inp.focus(); renderList(''); }, 10);
+        }
+        function hideHelp(){ helpOverlay.style.display = 'none'; document.activeElement && document.activeElement.blur(); }
+
+        // expose
+        window.showHelp = showHelp;
+        window.hideHelp = hideHelp;
+        renderList('');
+        return helpOverlay;
+      }
+
+      // Search overlay (/) — filter events
+      let searchOverlay;
+      let preSearchSelected = -1;
+      let matchIndices = [];
+      let matchPointer = 0;
+      function ensureSearch(){
+        if(searchOverlay) return searchOverlay;
+        searchOverlay = document.createElement('div');
+        searchOverlay.className = 'search-overlay';
+        searchOverlay.style.display = 'none';
+
+        const box = document.createElement('div'); box.className = 'search-box';
+        const input = document.createElement('input'); input.className = 'search-input'; input.placeholder = "Search (prefix with ':' to search titles only)";
+        const info = document.createElement('div'); info.className = 'search-info'; info.textContent = '';
+        box.appendChild(input); box.appendChild(info);
+        searchOverlay.appendChild(box);
+        document.body.appendChild(searchOverlay);
+
+        function render(q){
+          matchIndices = [];
+          const isTitleOnly = q.startsWith(':');
+          const qstr = (isTitleOnly ? q.slice(1) : q).trim().toLowerCase();
+          for(let i=0;i<eventsEl.children.length;i++){
+            const evt = eventsEl.children[i];
+            const title = (evt.querySelector('.title')||{innerText:''}).innerText.toLowerCase();
+            const details = (evt.querySelector('.details')||{value:''}).value.toLowerCase();
+            let match = false;
+            if(qstr === '') match = true;
+            else if(isTitleOnly) match = title.indexOf(qstr) !== -1;
+            else match = (title + ' ' + details).indexOf(qstr) !== -1;
+            evt.classList.toggle('hidden', !match);
+            if(match) matchIndices.push(i);
+          }
+          info.textContent = matchIndices.length + ' match' + (matchIndices.length === 1 ? '' : 'es');
+          if(matchIndices.length){ matchPointer = 0; selectIndex(matchIndices[matchPointer]); }
+          else clearSelection();
+        }
+
+        input.addEventListener('input', ()=> render(input.value));
+        input.addEventListener('keydown', (ev)=>{
+          if(ev.key === 'Escape'){ hideSearch(true); ev.preventDefault(); }
+          if(ev.key === 'Enter'){ if(matchIndices.length){ selectIndex(matchIndices[matchPointer]); hideSearch(false); } ev.preventDefault(); }
+          if(ev.key === 'ArrowDown'){ if(matchIndices.length){ matchPointer = Math.min(matchPointer+1, matchIndices.length-1); selectIndex(matchIndices[matchPointer]); } ev.preventDefault(); }
+          if(ev.key === 'ArrowUp'){ if(matchIndices.length){ matchPointer = Math.max(matchPointer-1, 0); selectIndex(matchIndices[matchPointer]); } ev.preventDefault(); }
+        });
+
+        searchOverlay.addEventListener('click', (ev)=>{ if(ev.target === searchOverlay) hideSearch(); });
+
+        function showSearch(){ ensureSearch(); preSearchSelected = selectedIndex; searchOverlay.style.display = 'flex'; const inp = searchOverlay.querySelector('.search-input'); inp.value = ''; setTimeout(()=>{ inp.focus(); render(''); }, 10); }
+        function hideSearch(restorePrevious = true){ searchOverlay.style.display = 'none'; for(const e of eventsEl.children) e.classList.remove('hidden'); if(restorePrevious){ if(preSearchSelected !== -1) selectIndex(preSearchSelected); else clearSelection(); } }
+
+        window.showSearch = showSearch; window.hideSearch = hideSearch;
+        return searchOverlay;
+      }
+
+      // Key handling
+      document.addEventListener('keydown', (e)=>{
+        const active = document.activeElement;
+        const isEditing = active && ((active.getAttribute && active.getAttribute('contenteditable') === 'true') || active.tagName === 'TEXTAREA' || active.isContentEditable);
+        // allow Ctrl/Cmd+S even while editing
+        if((e.ctrlKey || e.metaKey) && e.key.toLowerCase() === 's'){
+          e.preventDefault();
+          save();
+          return;
+        }
+
+        // if help, search or range overlay open, route to it
+        if((helpOverlay && helpOverlay.style.display === 'flex') || (searchOverlay && searchOverlay.style.display === 'flex') || (rangeOverlay && rangeOverlay.style.display === 'flex')){
+          if(e.key === 'Escape'){
+            if(helpOverlay && helpOverlay.style.display === 'flex') hideHelp();
+            if(searchOverlay && searchOverlay.style.display === 'flex') hideSearch();
+            if(rangeOverlay && rangeOverlay.style.display === 'flex') hideRange();
+            e.preventDefault();
+          }
+          return; // don't process other global keys while help, search or range is open
+        }
+
+        if(isEditing) return;
+
+        if(e.key === '/'){
+          e.preventDefault(); ensureSearch(); showSearch(); return;
+        }
+
+        if(e.key === 'a'){
+          e.preventDefault();
+          if(selectedIndex !== -1){
+            // insert after selected
+            addEvent('', { focus: true, insertAt: selectedIndex + 1 });
+          } else {
+            addEvent('', { focus: true });
+          }
+          return;
+        }
+
+        if(e.key === 'j'){
+          e.preventDefault(); selectNext(); return;
+        }
+        if(e.key === 'k'){
+          e.preventDefault(); selectPrev(); return;
+        }
+
+        if(e.key === 'h'){
+          e.preventDefault(); moveSelectedLeft(); return;
+        }
+        if(e.key === 'l'){
+          e.preventDefault(); moveSelectedRight(); return;
+        }
+
+        if(e.key === 'J'){
+          e.preventDefault(); moveSelectedDown(); return;
+        }
+        if(e.key === 'K'){
+          e.preventDefault(); moveSelectedUp(); return;
+        }
+
+        if(e.key === 'G'){
+          e.preventDefault(); selectFirst(); return;
+        }
+        if(e.key === 'g'){
+          e.preventDefault(); selectLast(); return;
+        }
+
+        if((e.key === 'i' || e.key === 'Enter') && selectedIndex !== -1){
+          e.preventDefault(); enterInsertOnSelected(); return;
+        }
+
+        if(e.key === 'D'){
+          e.preventDefault(); deleteSelected(); return;
+        }
+
+        if(e.key === 's' && !e.shiftKey){
+          e.preventDefault();
+          save();
+          return;
+        }
+
+        if(e.key === '$'){
+          e.preventDefault(); ensureRange(); showRange(); return;
+        }
+        if(e.key === 'S' || (e.key === 's' && e.shiftKey)){
+          e.preventDefault();
+          saveAs();
+          return;
+        }
+
+        if(e.key === 'U' || (e.key === 'u' && e.shiftKey)){
+          e.preventDefault();
+          triggerImport();
+          return;
+        }
+
+        if(e.key === '?'){
+          e.preventDefault();
+          ensureHelp();
+          window.showHelp();
+          return;
+        }
+
+        if(e.key === 'Escape'){
+          // clear selection / exit any mode
+          e.preventDefault();
+          clearSelection();
+          setMode('normal');
+          return;
+        }
+      });
+
+      // Load initial data from embedded JSON if present
+      function loadFromEmbedded(){
+        const el = document.getElementById('andthen-data');
+        if(!el) return false;
+        try{
+          const parsed = JSON.parse(el.textContent || el.innerText || '{}');
+          if(parsed && Array.isArray(parsed.events)){
+            if(parsed.title){ document.title = parsed.title; currentTitle = parsed.title; }
+            if(parsed.range){ setRange(parsed.range); }
+            renderFromData(parsed.events);
+            return true;
+          }
+        }catch(e){ console.warn('andthen: failed to parse embedded data', e); }
+        return false;
+      }
+
+      // On load
+      document.addEventListener('DOMContentLoaded', ()=>{
+        const loaded = loadFromEmbedded();
+        if(!loaded){
+          // no embedded data — start with a single empty event for convenience, but remain in NORMAL mode
+          createEvent('', { focus: false });
+          setMode('normal');
+        }
+        // ensure connectors are in sync on load
+        scheduleUpdate();
+      });
+
+    })();
+  </script>
+</body>
+</html>
